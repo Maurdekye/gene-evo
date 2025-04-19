@@ -100,6 +100,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
         R: RandomSource,
         G: Clone + Genome + Send + Sync + 'scope,
     {
+        self.seed(rng);
         for _ in 0..num_children {
             let mut new_child = {
                 let gene_pool = self.gene_pool.read().unwrap();
