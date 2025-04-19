@@ -4,7 +4,7 @@ use std::{
     thread::{self, ScopedJoinHandle},
 };
 
-use crate::{Genome, PopulationStats, SelectionStrategy, num_cpus, random_choice_weighted};
+use crate::{num_cpus, random_choice_weighted, random_f32, Genome, PopulationStats};
 
 #[allow(unused)]
 pub struct StochasticTrainer<'scope, G> {
@@ -151,5 +151,41 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
         self.prune::<S, R>(rng);
         self.reproduce(rng);
         results
+    }
+
+    pub fn train<S, R>(&mut self, epochs: usize, rng: &mut R)
+    where
+        G: Clone + Genome,
+        R: RandomSource,
+        S: SelectionStrategy,
+    {
+        for _ in self.epoch..epochs {
+            let stats = self.step::<S, R>(rng);
+            println!("epoch={}, {}", self.epoch, stats);
+        }
+    }
+}
+
+
+pub trait SelectionStrategy {
+    /// A strategy to determine if a given fitness percentile from 0-1 should
+    /// be selected to proceed to the next epoch, or if it should be
+    /// removed from the gene pool
+    fn select<R: RandomSource>(percentile: f32, rng: &mut R) -> bool;
+}
+
+pub struct Top50th;
+
+impl SelectionStrategy for Top50th {
+    fn select<R: RandomSource>(percentile: f32, _rng: &mut R) -> bool {
+        percentile > 0.5
+    }
+}
+
+pub struct LinearLikelihood;
+
+impl SelectionStrategy for LinearLikelihood {
+    fn select<R: RandomSource>(percentile: f32, rng: &mut R) -> bool {
+        percentile > random_f32(rng)
     }
 }

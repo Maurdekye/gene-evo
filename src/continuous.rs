@@ -101,13 +101,16 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
         G: Clone + Genome + Send + Sync + 'scope,
     {
         self.seed(rng);
-        for _ in 0..num_children {
+        for i in 0..num_children {
             let mut new_child = {
                 let gene_pool = self.gene_pool.read().unwrap();
                 random_choice_weighted(&gene_pool, rng).clone()
             };
             new_child.mutate(self.mutation_rate, rng);
             self.work_submission.send(new_child).unwrap();
+            if i % self.population_size == 0 {
+                println!("child {i}, {}", self.population_stats());
+            }
         }
     }
 
