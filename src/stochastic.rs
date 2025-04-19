@@ -1,18 +1,18 @@
-use std::fmt;
 use std::{
     random::RandomSource,
     sync::{mpmc, mpsc},
     thread::{self, ScopedJoinHandle},
 };
 
-use crate::{num_cpus, random_choice_weighted, Genome, SelectionStrategy};
+use crate::{Genome, PopulationStats, SelectionStrategy, num_cpus, random_choice_weighted};
 
+#[allow(unused)]
 pub struct StochasticTrainer<'scope, G> {
     pub gene_pool: Vec<(G, Option<f32>)>,
-    _worker_pool: Vec<ScopedJoinHandle<'scope, ()>>,
+    worker_pool: Vec<ScopedJoinHandle<'scope, ()>>,
     work_submission: mpmc::Sender<(usize, G)>,
     work_reception: mpsc::Receiver<(usize, f32)>,
-    epoch: usize,
+    pub epoch: usize,
     population_size: usize,
     mutation_rate: f32,
 }
@@ -42,7 +42,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
             .collect();
         Self {
             gene_pool,
-            _worker_pool: worker_pool,
+            worker_pool,
             work_submission,
             work_reception,
             epoch: 0,
@@ -139,24 +139,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
         }
     }
 
-    pub fn evaluate_generation(&self) -> EpochResults {
-        let mut scores: Vec<_> = self.scores().collect();
-        scores.sort_by(|a, b| a.total_cmp(b));
-        let &min_fitness = scores.first().unwrap();
-        let &max_fitness = scores.last().unwrap();
-        let mean_fitness = scores.iter().sum::<f32>() / scores.len() as f32;
-        let median_fitness = scores[scores.len() / 2];
-        let epoch = self.epoch;
-        EpochResults {
-            min_fitness,
-            max_fitness,
-            mean_fitness,
-            median_fitness,
-            epoch,
-        }
-    }
-
-    pub fn step<S, R>(&mut self, rng: &mut R) -> EpochResults
+    pub fn step<S, R>(&mut self, rng: &mut R) -> PopulationStats
     where
         G: Clone + Genome,
         R: RandomSource,
@@ -164,31 +147,9 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     {
         self.epoch += 1;
         self.eval();
-        let results = self.evaluate_generation();
+        let results: PopulationStats = self.scores().collect();
         self.prune::<S, R>(rng);
         self.reproduce(rng);
         results
-    }
-}
-
-pub struct EpochResults {
-    min_fitness: f32,
-    max_fitness: f32,
-    mean_fitness: f32,
-    median_fitness: f32,
-    epoch: usize,
-}
-
-impl fmt::Display for EpochResults {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "epoch={} min={:.4} max={:.4} mean={:.4} median={:.4}",
-            self.epoch,
-            self.min_fitness,
-            self.max_fitness,
-            self.mean_fitness,
-            self.median_fitness
-        )
     }
 }

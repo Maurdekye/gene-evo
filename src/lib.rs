@@ -1,10 +1,12 @@
 #![feature(random)]
 #![feature(mpmc_channel)]
 use std::{
+    fmt,
     random::{Random, RandomSource},
     thread::available_parallelism,
 };
 
+pub mod continuous;
 pub mod stochastic;
 
 pub trait Genome {
@@ -44,9 +46,38 @@ impl SelectionStrategy for LinearLikelihood {
     }
 }
 
-pub mod continuous {
+pub struct PopulationStats {
+    min_fitness: f32,
+    max_fitness: f32,
+    mean_fitness: f32,
+    median_fitness: f32,
+}
 
-    pub struct ContinuousTrainer;
+impl FromIterator<f32> for PopulationStats {
+    fn from_iter<T: IntoIterator<Item = f32>>(iter: T) -> Self {
+        let mut scores: Vec<_> = iter.into_iter().collect();
+        scores.sort_by(|a, b| a.total_cmp(b));
+        let &min_fitness = scores.first().unwrap();
+        let &max_fitness = scores.last().unwrap();
+        let mean_fitness = scores.iter().sum::<f32>() / scores.len() as f32;
+        let median_fitness = scores[scores.len() / 2];
+        PopulationStats {
+            min_fitness,
+            max_fitness,
+            mean_fitness,
+            median_fitness,
+        }
+    }
+}
+
+impl fmt::Display for PopulationStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "min={:.4} max={:.4} mean={:.4} median={:.4}",
+            self.min_fitness, self.max_fitness, self.mean_fitness, self.median_fitness
+        )
+    }
 }
 
 fn random_f32<R>(rng: &mut R) -> f32
