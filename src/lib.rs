@@ -95,10 +95,22 @@ fn random_choice_weighted<'a, T, R>(weights: &'a [(T, f32)], rng: &mut R) -> &'a
 where
     R: RandomSource,
 {
-    let total: f32 = weights.iter().map(|x| x.1).sum();
+    random_choice_weighted_mapped(weights, rng, |x| x)
+}
+
+fn random_choice_weighted_mapped<'a, T, R>(
+    weights: &'a [(T, f32)],
+    rng: &mut R,
+    weight_map: impl Fn(f32) -> f32,
+) -> &'a T
+where
+    R: RandomSource,
+{
+    let total: f32 = weights.iter().map(|x| (weight_map)(x.1)).sum();
     let mut n = random_f32(rng) * total;
     for (value, weight) in weights {
-        if n <= *weight {
+        let weight = (weight_map)(*weight);
+        if n <= weight {
             return value;
         }
         n -= weight;

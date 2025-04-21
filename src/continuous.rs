@@ -5,7 +5,9 @@ use std::{
     thread::{self, ScopedJoinHandle},
 };
 
-use crate::{Gate, Genome, PopulationStats, num_cpus, random_choice_weighted};
+use crate::{
+    Gate, Genome, PopulationStats, num_cpus, random_choice_weighted, random_choice_weighted_mapped,
+};
 
 #[allow(unused)]
 pub struct ContinuousTrainer<'scope, G> {
@@ -117,7 +119,12 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
         for i in 0..num_children {
             let mut new_child = {
                 let gene_pool = self.gene_pool.read().unwrap();
-                random_choice_weighted(&gene_pool, rng).clone()
+                let min_fitness = gene_pool
+                    .iter()
+                    .map(|x| x.1)
+                    .min_by(|a, b| a.total_cmp(b))
+                    .unwrap();
+                random_choice_weighted_mapped(&gene_pool, rng, |x| x - min_fitness).clone()
             };
             new_child.mutate(self.mutation_rate, rng);
             self.submit_job(new_child);
