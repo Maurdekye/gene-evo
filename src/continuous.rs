@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    Gate, Genome, PopulationStats, num_cpus, random_choice_weighted, random_choice_weighted_mapped,
+    Gate, Genome, PopulationStats, num_cpus, random_choice_weighted_mapped,
 };
 
 #[allow(unused)]
