@@ -4,7 +4,7 @@ use std::{
     thread::{self, ScopedJoinHandle},
 };
 
-use crate::{num_cpus, random_choice_weighted, random_f32, Genome, PopulationStats};
+use crate::{Genome, PopulationStats, num_cpus, random_choice_weighted, random_f32};
 
 #[allow(unused)]
 pub struct StochasticTrainer<'scope, G> {
@@ -153,7 +153,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
         results
     }
 
-    pub fn train<S, R>(&mut self, epochs: usize, rng: &mut R)
+    pub fn train<S, R>(&mut self, epochs: usize, rng: &mut R) -> G
     where
         G: Clone + Genome,
         R: RandomSource,
@@ -163,9 +163,15 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
             let stats = self.step::<S, R>(rng);
             println!("epoch={}, {}", self.epoch, stats);
         }
+        self.gene_pool
+            .iter()
+            .filter_map(|(g, score)| score.map(|s| (g, s)))
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap()
+            .0
+            .clone()
     }
 }
-
 
 pub trait SelectionStrategy {
     /// A strategy to determine if a given fitness percentile from 0-1 should

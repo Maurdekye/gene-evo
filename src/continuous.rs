@@ -1,10 +1,11 @@
 use std::{
+    ops::AddAssign,
     random::RandomSource,
     sync::{Arc, RwLock, mpmc, mpsc},
     thread::{self, ScopedJoinHandle},
 };
 
-use crate::{Genome, PopulationStats, num_cpus, random_choice_weighted};
+use crate::{Gate, Genome, PopulationStats, num_cpus, random_choice_weighted};
 
 #[allow(unused)]
 pub struct ContinuousTrainer<'scope, G> {
@@ -14,6 +15,7 @@ pub struct ContinuousTrainer<'scope, G> {
     receiver_thread: ScopedJoinHandle<'scope, ()>,
     mutation_rate: f32,
     population_size: usize,
+    in_flight: Gate<usize>,
 }
 
 impl<'scope, G> ContinuousTrainer<'scope, G> {
@@ -25,6 +27,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     where
         G: Genome + 'scope + Send + Sync,
     {
+        let in_flight = Gate::new(0);
         let (work_submission, inbox) = mpmc::sync_channel(0);
         let (outbox, work_reception) = mpsc::channel();
         let gene_pool = Arc::new(RwLock::new(Vec::new()));
@@ -37,11 +40,13 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
             .collect();
         let receiver_thread = {
             let gene_pool = gene_pool.clone();
+            let in_flight = in_flight.clone();
             scope.spawn(move || {
                 ContinuousTrainer::<G>::work_receiver_thread(
                     work_reception,
                     gene_pool,
                     population_size,
+                    in_flight,
                 )
             })
         };
@@ -52,6 +57,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
             receiver_thread,
             mutation_rate,
             population_size,
+            in_flight,
         }
     }
 
@@ -69,6 +75,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
         work_reception: mpsc::Receiver<(G, f32)>,
         gene_pool: Arc<RwLock<Vec<(G, f32)>>>,
         max_population_size: usize,
+        in_flight: Gate<usize>,
     ) {
         for (gene, score) in work_reception {
             let mut gene_pool = gene_pool.write().unwrap();
@@ -81,7 +88,13 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
             if gene_pool.len() > max_population_size {
                 gene_pool.drain(max_population_size..);
             }
+            in_flight.update(|x| *x = x.saturating_sub(1));
         }
+    }
+
+    pub fn submit_job(&mut self, gene: G) {
+        self.in_flight.update(|x| x.add_assign(1));
+        self.work_submission.send(gene).unwrap();
     }
 
     pub fn seed<R>(&mut self, rng: &mut R)
@@ -91,11 +104,11 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     {
         let current_gene_pool_size = self.gene_pool.read().unwrap().len();
         for _ in current_gene_pool_size..self.population_size {
-            self.work_submission.send(G::generate(rng)).unwrap();
+            self.submit_job(G::generate(rng));
         }
     }
 
-    pub fn train<R>(&mut self, num_children: usize, rng: &mut R)
+    pub fn train<R>(&mut self, num_children: usize, rng: &mut R) -> G
     where
         R: RandomSource,
         G: Clone + Genome + Send + Sync + 'scope,
@@ -107,11 +120,13 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
                 random_choice_weighted(&gene_pool, rng).clone()
             };
             new_child.mutate(self.mutation_rate, rng);
-            self.work_submission.send(new_child).unwrap();
+            self.submit_job(new_child);
             if i % self.population_size == 0 {
                 println!("child {i}, {}", self.population_stats());
             }
         }
+        self.in_flight.wait_while(|x| *x > 0);
+        self.gene_pool.read().unwrap().first().unwrap().0.clone()
     }
 
     pub fn population_stats(&self) -> PopulationStats {
