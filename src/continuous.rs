@@ -6,7 +6,7 @@ use std::{
 };
 
 use crate::{
-    Gate, Genome, PopulationStats, num_cpus, random_choice_weighted_mapped,
+    Gate, GeneticTrainer, Genome, PopulationStats, num_cpus, random_choice_weighted_mapped,
 };
 
 #[allow(unused)]
@@ -138,5 +138,20 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
 
     pub fn population_stats(&self) -> PopulationStats {
         self.gene_pool.read().unwrap().iter().map(|x| x.1).collect()
+    }
+}
+
+pub struct ContinuousTrainerParams {
+    pub num_children: usize,
+}
+
+impl<'scope, G> GeneticTrainer<G> for ContinuousTrainer<'scope, G>
+where
+    G: Clone + Genome + Send + Sync + 'scope,
+{
+    type TrainingParams = ContinuousTrainerParams;
+
+    fn train<R: RandomSource>(&mut self, rng: &mut R, params: Self::TrainingParams) -> G {
+        ContinuousTrainer::train(self, params.num_children, rng)
     }
 }

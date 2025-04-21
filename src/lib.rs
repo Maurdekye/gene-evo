@@ -46,6 +46,12 @@ pub trait Genome {
     fn fitness(&self) -> f32;
 }
 
+pub trait GeneticTrainer<G> {
+    type TrainingParams;
+
+    fn train<R: RandomSource>(&mut self, rng: &mut R, params: Self::TrainingParams) -> G;
+}
+
 pub struct PopulationStats {
     min_fitness: f32,
     max_fitness: f32,

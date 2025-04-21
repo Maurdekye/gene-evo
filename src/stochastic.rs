@@ -4,7 +4,9 @@ use std::{
     thread::{self, ScopedJoinHandle},
 };
 
-use crate::{Genome, PopulationStats, num_cpus, random_choice_weighted, random_f32};
+use crate::{
+    GeneticTrainer, Genome, PopulationStats, num_cpus, random_choice_weighted, random_f32,
+};
 
 #[allow(unused)]
 pub struct StochasticTrainer<'scope, G> {
@@ -193,5 +195,20 @@ pub struct LinearLikelihood;
 impl SelectionStrategy for LinearLikelihood {
     fn select<R: RandomSource>(percentile: f32, rng: &mut R) -> bool {
         percentile > random_f32(rng)
+    }
+}
+
+pub struct StochasticTrainerParams {
+    pub num_epochs: usize,
+}
+
+impl<'scope, G> GeneticTrainer<G> for StochasticTrainer<'scope, G>
+where
+    G: Clone + Genome + Send + Sync + 'scope,
+{
+    type TrainingParams = StochasticTrainerParams;
+
+    fn train<R: RandomSource>(&mut self, rng: &mut R, params: Self::TrainingParams) -> G {
+        StochasticTrainer::train::<LinearLikelihood, R>(self, params.num_epochs, rng)
     }
 }
