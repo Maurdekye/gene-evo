@@ -121,7 +121,7 @@ where
         }
         n -= weight;
     }
-    unreachable!("Should always eventually choose an item")
+    &weights.last().unwrap().0
 }
 
 #[derive(Clone)]

@@ -110,13 +110,17 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
         }
     }
 
-    pub fn train<R>(&mut self, num_children: usize, rng: &mut R) -> G
+    pub fn train<R>(
+        &mut self,
+        train_criteria: impl Fn(ContinuousTrainingMetrics) -> bool,
+        rng: &mut R,
+    ) -> G
     where
         R: RandomSource,
         G: Clone + Genome + Send + Sync + 'scope,
     {
         self.seed(rng);
-        for i in 0..num_children {
+        for i in 0.. {
             let mut new_child = {
                 let gene_pool = self.gene_pool.read().unwrap();
                 let min_fitness = gene_pool
@@ -129,16 +133,33 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
             new_child.mutate(self.mutation_rate, rng);
             self.submit_job(new_child);
             if i % self.population_size == 0 {
-                println!("child {i}, {}", self.population_stats());
+                let stats = self.population_stats();
+                println!("child {i}, {stats}");
+            }
+            if !(train_criteria)(self.metrics(i)) {
+                break;
             }
         }
         self.in_flight.wait_while(|x| *x > 0);
         self.gene_pool.read().unwrap().first().unwrap().0.clone()
     }
 
+    fn metrics(&self, child_count: usize) -> ContinuousTrainingMetrics {
+        let gene_pool = self.gene_pool.read().unwrap();
+        ContinuousTrainingMetrics {
+            maximum_fitness: gene_pool.first().unwrap().1,
+            child_count,
+        }
+    }
+
     pub fn population_stats(&self) -> PopulationStats {
         self.gene_pool.read().unwrap().iter().map(|x| x.1).collect()
     }
+}
+
+pub struct ContinuousTrainingMetrics {
+    pub maximum_fitness: f32,
+    pub child_count: usize,
 }
 
 pub struct ContinuousTrainerParams {
@@ -152,6 +173,6 @@ where
     type TrainingParams = ContinuousTrainerParams;
 
     fn train<R: RandomSource>(&mut self, rng: &mut R, params: Self::TrainingParams) -> G {
-        ContinuousTrainer::train(self, params.num_children, rng)
+        ContinuousTrainer::train(self, |x| x.child_count < params.num_children, rng)
     }
 }
