@@ -3,5 +3,6 @@ name = "gene-evo"
 version = "1.0.0"
 edition = "2024"
 license = "MIT"
+description = "Standard and novel genetic evolution algorithm implementations, using advanced rust std functionality and zero dependencies."
 
 [dependencies]
