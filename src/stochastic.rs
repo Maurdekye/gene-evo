@@ -1,4 +1,4 @@
-//! Stochastic Training
+//! Stochastic Training.
 //! See the documentation for [`StochasticTrainer`] for more details.
 
 use std::{

@@ -33,16 +33,16 @@ pub trait Genome {
 #[derive(Clone, Copy, Debug)]
 pub struct PopulationStats {
     
-    /// Maximum fitness of the population
+    /// Maximum fitness of the population.
     pub max_fitness: f32,
     
-    /// Minimum fitness of the population
+    /// Minimum fitness of the population.
     pub min_fitness: f32,
     
-    /// Median fitness of the population
+    /// Median fitness of the population.
     pub mean_fitness: f32,
 
-    /// Median fitness of the population
+    /// Median fitness of the population.
     pub median_fitness: f32,
 }
 

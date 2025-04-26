@@ -1,4 +1,4 @@
-//! Continuous Training
+//! Continuous Training.
 //! See the documentation for [`ContinuousTrainer`] for more details.
 
 use std::{
@@ -250,13 +250,13 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
 /// can be used to inform whether or not to continue training
 #[derive(Clone, Copy, Debug)]
 pub struct ContinuousTrainingCriteriaMetrics {
-    /// Maximum fitness of the population
+    /// Maximum fitness of the population.
     pub max_fitness: f32,
 
-    /// Minimum fitness of the population
+    /// Minimum fitness of the population.
     pub min_fitness: f32,
 
-    /// Median fitness of the population
+    /// Median fitness of the population.
     pub median_fitness: f32,
 
     /// Total number of children that have been
