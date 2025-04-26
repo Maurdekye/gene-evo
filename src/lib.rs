@@ -1,27 +1,7 @@
-//! Genetic algorithm evolution
-//!
-//! Comes with two drivers: [`continuous::ContinuousTrainer`] and [`stochastic::StochasticTrainer`]
-//!
-//! [`stochastic::StochasticTrainer`] trains using the typical discrete generational strategy: a random
-//! population of genomes is seeded to begin the process. They are individually evaluated for fitness,
-//! and then based on a given selection strategy, are either retained for the next generation or die off.
-//! The remaining genes reproduce with minor mutations to determine the population of the next generation.
-//!
-//! [`continuous::ContinuousTrainer`] works using a more novel strategy: evolution occurs not in discrete
-//! steps, but instead continuously, constantly, without stopping. All genes are ranked from least to most
-//! fit, and at all times, random genes from the population, weighted by their fitness, are selected and chosen to
-//! be mutated, modified, and re-inserted back into the population in their appropriate ranking based on their
-//! new fitness level. This continues constantly without stopping, until a set number of new children have
-//! been repopulated.
-//!
-//! Using the trainers is simple. Simply implement the [`Genome`] trait with your custom type, construct a `new`
-//! trainer, and then run `train` with the appropriate parameters. Training will begin automatically, and end
-//! once the ending criteria have been met. The stochastic trainer will print out statistics about the population
-//! once per epoch: the continuous trainer will print those statistics once every n children have been reproduced,
-//! where n is the overall population size.
-
+#![doc = include_str!("../README.md")]
 #![feature(random)]
 #![feature(mpmc_channel)]
+
 use std::{
     fmt,
     random::{Random, RandomSource},
@@ -32,6 +12,8 @@ use std::{
 pub mod continuous;
 pub mod stochastic;
 
+/// Represents a single Genome in a genetic evolution simulation.
+/// Implement this trait for your type to evolve it using genetic evolution.
 pub trait Genome {
     /// Generate a new instance of this genome from the given random source.
     fn generate<R: RandomSource>(rng: &mut R) -> Self;
@@ -46,17 +28,22 @@ pub trait Genome {
     fn fitness(&self) -> f32;
 }
 
-pub trait GeneticTrainer<G> {
-    type TrainingParams;
-
-    fn train<R: RandomSource>(&mut self, rng: &mut R, params: Self::TrainingParams) -> G;
-}
-
+/// A collection of standard population statistics that can be used
+/// for progress reporting.
+#[derive(Clone, Copy, Debug)]
 pub struct PopulationStats {
-    min_fitness: f32,
-    max_fitness: f32,
-    mean_fitness: f32,
-    median_fitness: f32,
+    
+    /// Maximum fitness of the population
+    pub max_fitness: f32,
+    
+    /// Minimum fitness of the population
+    pub min_fitness: f32,
+    
+    /// Median fitness of the population
+    pub mean_fitness: f32,
+
+    /// Median fitness of the population
+    pub median_fitness: f32,
 }
 
 impl FromIterator<f32> for PopulationStats {
@@ -84,6 +71,23 @@ impl fmt::Display for PopulationStats {
             self.min_fitness, self.max_fitness, self.mean_fitness, self.median_fitness
         )
     }
+}
+
+/// A struct that encompasses a two-part reporting
+/// strategy to use when performing periodic progress
+/// updates. [`TrainingReportStrategy::should_report`]
+/// represents whether or not a report should be generated
+/// at this moment, and [`TrainingReportStrategy::report_callback`]
+/// performs the actual reporting.
+pub struct TrainingReportStrategy<F, C> {
+    /// A callback used to determine if a report
+    /// should be generated at this moment.
+    pub should_report: F,
+
+    /// A callback used to when a report should be displayed 
+    /// or logged in some form. This callback is only called if
+    /// [`TrainingReportStrategy::should_report`] returns `true`.
+    pub report_callback: C,
 }
 
 fn random_f32<R>(rng: &mut R) -> f32

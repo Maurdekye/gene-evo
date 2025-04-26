@@ -7,11 +7,7 @@ use std::{
     thread::scope,
 };
 
-use gene_evo::{
-    Genome,
-    continuous::ContinuousTrainer,
-    stochastic::{LinearLikelihood, StochasticTrainer},
-};
+use gene_evo::{Genome, continuous::ContinuousTrainer, stochastic::StochasticTrainer};
 
 #[derive(Debug, Clone)]
 pub struct PsuedoRandomSource {
@@ -96,11 +92,8 @@ impl Genome for QuadraticZerosFinder {
             x.powi(4) + 4.0 * x.powi(3) - 7.0 * x.powi(2) - 22.0 * x + 24.0
         }
 
-        let closeness_to_zero_score: f32 = self
-            .zeroes
-            .iter()
-            .map(|&z| hump(quadratic(z).abs()))
-            .sum();
+        let closeness_to_zero_score: f32 =
+            self.zeroes.iter().map(|&z| hump(quadratic(z).abs())).sum();
 
         let proximity_penalty: f32 = self
             .zeroes
@@ -132,8 +125,7 @@ fn stochastic() {
     scope(|scope| {
         let mut rng = PsuedoRandomSource::new();
         let mut trainer = StochasticTrainer::new(50000, 0.05, &mut rng, scope);
-        let final_genome: QuadraticZerosFinder =
-            trainer.train::<LinearLikelihood, _>(100, &mut rng);
+        let final_genome: QuadraticZerosFinder = trainer.train(100, &mut rng);
         println!("Final genome: {final_genome:?}");
         println!("Fitness: {}", final_genome.fitness());
     });
@@ -143,10 +135,8 @@ fn stochastic() {
 fn continuous() {
     scope(|scope| {
         let mut trainer = ContinuousTrainer::new(10000, 0.05, scope);
-        let final_genome: QuadraticZerosFinder = trainer.train(
-            |m| m.child_count < 100000,
-            &mut PsuedoRandomSource::new(),
-        );
+        let final_genome: QuadraticZerosFinder =
+            trainer.train(100000, &mut PsuedoRandomSource::new());
         println!("Final genome: {final_genome:?}");
         println!("Fitness: {}", final_genome.fitness());
     });
