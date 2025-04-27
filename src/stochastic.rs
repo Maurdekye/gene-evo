@@ -42,6 +42,14 @@ pub struct StochasticTrainer<'scope, G> {
 
     /// The mutation rate of newly reproduced children.
     pub mutation_rate: f32,
+
+    /// The proportion of newly reproduced children that are created as a result of
+    /// crossbreeding, vs mutations.
+    ///
+    /// Higher = more crossbreeding, lower = more mutations.
+    /// Set to 1 to only create new children via crossbreeding, and 0 to only create new children
+    /// via mutation.
+    pub reproduction_type_proportion: f32,
     #[allow(unused)]
     worker_pool: Vec<ScopedJoinHandle<'scope, ()>>,
     work_submission: mpmc::Sender<(usize, G)>,
@@ -50,7 +58,7 @@ pub struct StochasticTrainer<'scope, G> {
 }
 
 impl<'scope, G> StochasticTrainer<'scope, G> {
-    /// Construct a new trainer with a given population size and mutation rate.
+    /// Construct a new trainer with a given population size, mutation rate, and reproduction type proportion.
     ///
     /// A [`RandomSource`] must be passed in order to seed the
     /// initial population.
@@ -60,6 +68,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     pub fn new<R>(
         population_size: usize,
         mutation_rate: f32,
+        reproduction_type_proportion: f32,
         rng: &mut R,
         scope: &'scope thread::Scope<'scope, '_>,
     ) -> Self
@@ -87,6 +96,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
             generation: 0,
             population_size,
             mutation_rate,
+            reproduction_type_proportion,
         }
     }
 
@@ -150,7 +160,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     }
 
     /// Reproduce new children into the population, up to the population cap.
-    /// Chooses parent genes from the population to mutate, preferentially weighted by fitness
+    /// Chooses parent genes from the population to mutate or crossbreed, preferentially weighted by fitness
     /// score.
     ///
     /// Requires a [`RandomSource`] used to perform
@@ -177,22 +187,37 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
             })
             .collect();
         while self.gene_pool.len() < self.population_size {
-            let &parent_index = random_choice_weighted(&percentile_pairs, rng);
-            let mut new_child = self.gene_pool[parent_index].0.clone();
-            new_child.mutate(self.mutation_rate, rng);
+            let should_crossbreed = random_f32(rng) < self.reproduction_type_proportion;
+            let mut choose_parent_index = || random_choice_weighted(&percentile_pairs, rng);
+            let new_child = if should_crossbreed {
+                // same mother & father could potentially be chosen; this is acceptable,
+                // as it is unlikely with a sufficiently large populations, and the only
+                // outcome is a gene that is identical to the singular parent, equivalent
+                // to a gene chosen for mutation with mutation rate 0.
+                let &mother_index = (choose_parent_index)();
+                let &father_index = (choose_parent_index)();
+                self.gene_pool[mother_index]
+                    .0
+                    .crossbreed(&self.gene_pool[father_index].0, rng)
+            } else {
+                let &parent_index = (choose_parent_index)();
+                let mut new_child = self.gene_pool[parent_index].0.clone();
+                new_child.mutate(self.mutation_rate, rng);
+                new_child
+            };
             self.gene_pool.push((new_child, None));
         }
     }
 
     /// Perform one iteration of the genetic evolution process:
-    /// 
+    ///
     /// 1. Increment the generation
     /// 2. Evaluate the fitness for all genes in the current population
     /// 3. Compute statistics about the current population's fitness scores, if necessary
     /// 4. Prune the population using the passed `selection_strategy` (see [`StochasticTrainer::prune`] for a description of what the selection strategy is)
     /// 5. Reproduce the population to the current cap using the passed [`RandomSource`]
     /// 6. Generate a report about the current generation's statistics, if necessary
-    /// 
+    ///
     /// This function is used internally by the training process; it should
     /// typically not be called directly unless the user knows what they're doing.
     pub fn step<R>(
@@ -224,9 +249,10 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
 
     /// Begin training, finishing once the number of generations passed
     /// have been reached.
-    /// 
+    ///
     /// A [`RandomSource`] must be passed as a source of randomness
-    /// for mutating genes to produce new offspring, and to be passed to the selection strategy when
+    /// for choosing parents, mutating genes to produce new offspring,
+    /// and to be passed to the selection strategy when
     /// deciding to prune a given gene from the gene pool.
     pub fn train<R>(&mut self, generations: usize, rng: &mut R) -> G
     where
@@ -242,7 +268,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     }
 
     /// Begin training with more detailed custom parameters.
-    /// 
+    ///
     /// A manual `selection_strategy` is passed, which determines which genes to prune.
     /// The strategy should take a float between 0-1 representing the percentile of the
     /// fitness score associated (higher is better), and return
@@ -260,9 +286,10 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     /// [`TrainingReportStrategy`] to define the two methods necessary to manage reporting.
     /// To mimic the default reporting strategy, pass the result of [`default_reporting_strategy()`] wrapped
     /// in `Some()`.
-    /// 
+    ///
     /// A [`RandomSource`] must be passed as a source of randomness
-    /// for mutating genes to produce new offspring, and to be passed to the selection strategy when
+    /// for selecting parent genes, mutating genes to produce new offspring,
+    /// and to be passed to the selection strategy when
     /// deciding to prune a given gene from the gene pool.
     pub fn train_custom<R>(
         &mut self,
@@ -296,7 +323,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     }
 
     /// Generate population stats for the current state of this trainer.
-    /// 
+    ///
     /// This function is called whenever the reporting strategy is asked
     /// to produce a report about the current population, but it may also be called
     /// manually here.
@@ -308,14 +335,14 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     }
 
     /// Generate training criteria metrics for the current state of this trainer.
-    /// 
+    ///
     /// This is a strict subset of the data available in an instance of [`TrainingStats`]
     /// returned from calling [`StochasticTrainer::stats`]. However, these
     /// metrics were chosen specifically for their computation efficiency, and thus can be
     /// re-evaluated frequently with minimal cost. These metrics are used both to determine
     /// whether or not to continue training, and whether or not to display a report about
     /// training progress.
-    /// 
+    ///
     /// Unfortunately, due to the unsorted nature of the gene pool in efficient stochastic training,
     /// these statistics are much more minimal than the ones available in
     /// [`continuous::TrainingCriteriaMetrics`]
@@ -328,7 +355,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
 
 /// A collection of relevant & quick to compute metrics that
 /// can be used to inform whether or not to continue training.
-/// 
+///
 /// Unfortunately, because the gene population isn't inherently
 /// ordered like in [`continuous::ContinuousTrainer`],
 /// the only metric that can be presented quickly for this purpose
@@ -339,7 +366,7 @@ pub struct TrainingCriteriaMetrics {
 }
 
 /// A collection of statistics about the population as a whole.
-/// 
+///
 /// Relatively more expensive to compute than training metrics, so
 /// should be computed infrequently.
 #[derive(Clone, Copy, Debug)]
@@ -363,7 +390,7 @@ impl fmt::Display for TrainingStats {
 }
 
 /// Returns the default reporting strategy used by [`StochasticTrainer::train`].
-/// 
+///
 /// Logs population statistics to the console after every generation.
 pub fn default_reporting_strategy()
 -> TrainingReportStrategy<impl FnMut(TrainingCriteriaMetrics) -> bool, impl FnMut(TrainingStats)> {

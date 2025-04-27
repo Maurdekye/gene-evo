@@ -1,5 +1,6 @@
 //! simple tests that determine the roots of a simple quadratic equation
 #![feature(random)]
+#![feature(iterator_try_collect)]
 
 use std::{
     array,
@@ -87,6 +88,23 @@ impl Genome for QuadraticZerosFinder {
             .map(|z| z + (random_f32(rng) - 0.5) * mutation_rate);
     }
 
+    fn crossbreed<R>(&self, other: &Self, rng: &mut R) -> Self
+    where
+        R: RandomSource,
+    {
+        let mut i = 0;
+        QuadraticZerosFinder {
+            zeroes: self.zeroes.map(|a| {
+                i += 1;
+                if bool::random(rng) {
+                    a
+                } else {
+                    other.zeroes[i - 1]
+                }
+            }),
+        }
+    }
+
     fn fitness(&self) -> f32 {
         fn quadratic(x: f32) -> f32 {
             x.powi(4) + 4.0 * x.powi(3) - 7.0 * x.powi(2) - 22.0 * x + 24.0
@@ -124,7 +142,7 @@ fn check_zeros_finder_validity() {
 fn stochastic() {
     scope(|scope| {
         let mut rng = PsuedoRandomSource::new();
-        let mut trainer = StochasticTrainer::new(50000, 0.05, &mut rng, scope);
+        let mut trainer = StochasticTrainer::new(500, 0.05, 0.9, &mut rng, scope);
         let final_genome: QuadraticZerosFinder = trainer.train(100, &mut rng);
         println!("Final genome: {final_genome:?}");
         println!("Fitness: {}", final_genome.fitness());
@@ -134,7 +152,7 @@ fn stochastic() {
 #[test]
 fn continuous() {
     scope(|scope| {
-        let mut trainer = ContinuousTrainer::new(10000, 0.05, scope);
+        let mut trainer = ContinuousTrainer::new(10000, 0.05, 0.5, scope);
         let final_genome: QuadraticZerosFinder =
             trainer.train(100000, &mut PsuedoRandomSource::new());
         println!("Final genome: {final_genome:?}");

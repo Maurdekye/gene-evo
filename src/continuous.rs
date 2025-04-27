@@ -11,16 +11,17 @@ use std::{
 
 use crate::{
     Gate, Genome, PopulationStats, TrainingReportStrategy, num_cpus, random_choice_weighted_mapped,
+    random_f32,
 };
 
-/// This is one of two genetic algorithms in this crate, the "continuous" strategy. 
-/// 
-/// This is an alternative genetic algorithm implementation compared to the standard stochastic, 
+/// This is one of two genetic algorithms in this crate, the "continuous" strategy.
+///
+/// This is an alternative genetic algorithm implementation compared to the standard stochastic,
 /// generation-based strategy. This trainer runs its training
 /// continuously, nonstop, with no definable "break" in between generations. New genes are constantly
-/// being reproduced, mutated, evaluated, and ranked while the trainer runs, using a multithreaded
-/// pool of workers. 
-/// 
+/// being reproduced, crossbred, mutated, evaluated, and ranked while the trainer runs, using a multithreaded
+/// pool of workers.
+///
 /// As it's a more nonstandard training strategy, the allowed criteria for
 /// determining when to print population reports and when to end training are more flexible than in the
 /// typical evolutionary trainer, allowing the user to define exactly what criteria they want to
@@ -30,16 +31,24 @@ use crate::{
 pub struct ContinuousTrainer<'scope, G> {
     /// A collection of all the genes in the population and
     /// their fitness score, sorted descending by fitness.
-    /// 
+    ///
     /// Because of the continuous nature of the trainer,
     /// the collection is behind an `Arc<RwLock<_>>` combo.
     pub gene_pool: Arc<RwLock<Vec<(G, f32)>>>,
 
+    /// Count of the total number of children reproduced.
+    pub children_created: usize,
+
     /// The mutation rate of newly reproduced children.
     pub mutation_rate: f32,
 
-    /// Count of the total number of children reproduced.
-    pub children_created: usize,
+    /// The proportion of newly reproduced children that are created as a result of
+    /// crossbreeding, vs mutations.
+    ///
+    /// Higher = more crossbreeding, lower = more mutations.
+    /// Set to 1 to only create new children via crossbreeding, and 0 to only create new children
+    /// via mutation.
+    pub reproduction_type_proportion: f32,
     work_submission: mpmc::Sender<G>,
     #[allow(unused)]
     worker_pool: Vec<ScopedJoinHandle<'scope, ()>>,
@@ -50,13 +59,14 @@ pub struct ContinuousTrainer<'scope, G> {
 }
 
 impl<'scope, G> ContinuousTrainer<'scope, G> {
-    /// Construct a new trainer with a given population size and mutation rate.
-    /// 
+    /// Construct a new trainer with a given population size, mutation rate, and reproduction type proportion.
+    ///
     /// A reference to a [`thread::Scope`] must be passed in order
     /// to spawn the child worker threads for the lifetime of the trainer.
     pub fn new(
         population_size: usize,
         mutation_rate: f32,
+        reproduction_type_proportion: f32,
         scope: &'scope thread::Scope<'scope, '_>,
     ) -> Self
     where
@@ -94,6 +104,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
             population_size,
             in_flight,
             children_created: 0,
+            reproduction_type_proportion,
         }
     }
 
@@ -197,16 +208,30 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     {
         self.seed(rng);
         loop {
-            let mut new_child = {
+            let new_child = {
                 let gene_pool = self.gene_pool.read().unwrap();
                 let min_fitness = gene_pool
                     .iter()
                     .map(|x| x.1)
                     .min_by(|a, b| a.total_cmp(b))
                     .unwrap();
-                random_choice_weighted_mapped(&gene_pool, rng, |x| x - min_fitness).clone()
+                let should_crossbreed = random_f32(rng) < self.reproduction_type_proportion;
+                let mut choose_parent =
+                    || random_choice_weighted_mapped(&gene_pool, rng, |x| x - min_fitness);
+                if should_crossbreed {
+                    // same mother & father could potentially be chosen; this is acceptable,
+                    // as it is unlikely with a sufficiently large populations, and the only
+                    // outcome is a gene that is identical to the singular parent, equivalent
+                    // to a gene chosen for mutation with mutation rate 0.
+                    let mother = (choose_parent)();
+                    let father = (choose_parent)();
+                    mother.crossbreed(father, rng)
+                } else {
+                    let mut new_child = (choose_parent)().clone();
+                    new_child.mutate(self.mutation_rate, rng);
+                    new_child
+                }
             };
-            new_child.mutate(self.mutation_rate, rng);
             self.submit_job(new_child);
 
             let metrics = self.metrics();
@@ -298,10 +323,8 @@ impl fmt::Display for TrainingStats {
 /// Used by [`ContinuousTrainer::train`].
 pub fn default_reporting_strategy(
     n: usize,
-) -> TrainingReportStrategy<
-    impl FnMut(TrainingCriteriaMetrics) -> bool,
-    impl FnMut(TrainingStats),
-> {
+) -> TrainingReportStrategy<impl FnMut(TrainingCriteriaMetrics) -> bool, impl FnMut(TrainingStats)>
+{
     TrainingReportStrategy {
         should_report: move |m: TrainingCriteriaMetrics| m.child_count % n == 0,
         report_callback: |s| println!("{s}"),

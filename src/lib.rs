@@ -12,8 +12,9 @@ use std::{
 pub mod continuous;
 pub mod stochastic;
 
-/// Represents a single Genome in a genetic evolution simulation.
-/// Implement this trait for your type to evolve it using genetic evolution.
+/// Represents a single Genome in a genetic algorithm.
+/// 
+/// Implement this trait for your type to evolve it using natural selection.
 pub trait Genome {
     /// Generate a new instance of this genome from the given random source.
     fn generate<R>(rng: &mut R) -> Self
@@ -27,13 +28,20 @@ pub trait Genome {
     where
         R: RandomSource;
 
+    /// Yield a crossbred child gene of two separate parent genes.
+    fn crossbreed<R>(&self, other: &Self, rng: &mut R) -> Self
+    where
+        R: RandomSource;
+
     /// Evaluate this genome for its 'fitness' score. Higher fitness
-    /// scores will lead to a higher survival rate. 
-    /// 
+    /// scores will lead to a higher survival rate.
+    ///
     /// Genetic evolution
     /// is most effective when the fitness of a gene is computationally
     /// expensive and/or chaotic to compute, so execution of this method
-    /// is parallelized. 
+    /// is parallelized.
+    /// 
+    /// Negative fitness scores are valid.
     fn fitness(&self) -> f32;
 }
 
