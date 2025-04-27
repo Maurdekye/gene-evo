@@ -13,11 +13,15 @@ use crate::{
     Gate, Genome, PopulationStats, TrainingReportStrategy, num_cpus, random_choice_weighted_mapped,
 };
 
-/// This is an implementation of a continuous training strategy, an "alternative" evolutionary
-/// training strategy to the standard generation-based strategy. This trainer runs its training
+/// This is one of two genetic algorithms in this crate, the "continuous" strategy. 
+/// 
+/// This is an alternative genetic algorithm implementation compared to the standard stochastic, 
+/// generation-based strategy. This trainer runs its training
 /// continuously, nonstop, with no definable "break" in between generations. New genes are constantly
 /// being reproduced, mutated, evaluated, and ranked while the trainer runs, using a multithreaded
-/// pool of workers. As it's a more nonstandard training strategy, the allowed criteria for
+/// pool of workers. 
+/// 
+/// As it's a more nonstandard training strategy, the allowed criteria for
 /// determining when to print population reports and when to end training are more flexible than in the
 /// typical evolutionary trainer, allowing the user to define exactly what criteria they want to
 /// pay attention to during the training process. You can access these more detailed and complex
@@ -26,8 +30,9 @@ use crate::{
 pub struct ContinuousTrainer<'scope, G> {
     /// A collection of all the genes in the population and
     /// their fitness score, sorted descending by fitness.
+    /// 
     /// Because of the continuous nature of the trainer,
-    /// the collection is behind an `Arc<RwLock<>>` combo.
+    /// the collection is behind an `Arc<RwLock<_>>` combo.
     pub gene_pool: Arc<RwLock<Vec<(G, f32)>>>,
 
     /// The mutation rate of newly reproduced children.
@@ -46,7 +51,8 @@ pub struct ContinuousTrainer<'scope, G> {
 
 impl<'scope, G> ContinuousTrainer<'scope, G> {
     /// Construct a new trainer with a given population size and mutation rate.
-    /// A reference to a [`thread::Scope`] must be passed as well in order
+    /// 
+    /// A reference to a [`thread::Scope`] must be passed in order
     /// to spawn the child worker threads for the lifetime of the trainer.
     pub fn new(
         population_size: usize,
@@ -124,7 +130,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
 
     /// Submit a new genome to the worker pool to be evaluated for its fitness and
     /// ranked among the population. Used internally by the training process, should
-    /// typically not be called directly unless the users knows what they're doing.
+    /// typically not be called directly unless the user knows what they're doing.
     pub fn submit_job(&mut self, gene: G) {
         self.children_created += 1;
         self.in_flight.update(|x| x.add_assign(1));
@@ -132,9 +138,9 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     }
 
     /// Seed the population with new genes up to the current population cap.
-    /// Is called automatically at the start of training, so should typically
+    /// This is called automatically at the start of training, so should typically
     /// not need to be called directly.
-    /// A [`std::random::RandomSource`] must be passed as a source of randomness
+    /// A [`RandomSource`] must be passed as a source of randomness
     /// for generating the initial population.
     pub fn seed<R>(&mut self, rng: &mut R)
     where
@@ -148,8 +154,8 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     }
 
     /// Begin training, finishing once `num_children` children have been
-    /// bred and reproduced.
-    /// A [`std::random::RandomSource`] must be passed as a source of randomness
+    /// reproduced, ranked for fitness, and introduced into the population.
+    /// A [`RandomSource`] must be passed as a source of randomness
     /// for mutating genes to produce new offspring.
     pub fn train<R>(&mut self, num_children: usize, rng: &mut R) -> G
     where
@@ -165,22 +171,22 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
 
     /// Begin training with detailed custom parameters. Instead of a specific child
     /// count cutoff point, a function `train_criteria` is passed in, which takes in an
-    /// instance of [`ContinuousTrainingCriteriaMetrics`] and outputs a [`bool`]. This allows greater
+    /// instance of [`TrainingCriteriaMetrics`] and outputs a `bool`. This allows greater
     /// control over exactly what criteria to finish training under.
     ///
     /// Additionally, the user may pass a `reporting_strategy`, which determines the conditions
     /// and method under which periodic statistical reporting of the population is performed.
-    /// Pass `None` to disable reporting entirely, otherwise pass `Some` with an instance of
+    /// Pass `None` to disable reporting entirely, otherwise pass `Some` with an instance of a
     /// [`TrainingReportStrategy`] to define the two methods necessary to manage reporting.
-    /// A [`std::random::RandomSource`] must be passed as a source of randomness
+    /// A [`RandomSource`] must be passed as a source of randomness
     /// for mutating genes to produce new offspring.
     pub fn train_custom<R>(
         &mut self,
-        mut train_criteria: impl FnMut(ContinuousTrainingCriteriaMetrics) -> bool,
+        mut train_criteria: impl FnMut(TrainingCriteriaMetrics) -> bool,
         mut reporting_strategy: Option<
             TrainingReportStrategy<
-                impl FnMut(ContinuousTrainingCriteriaMetrics) -> bool,
-                impl FnMut(ContinuousTrainingStats),
+                impl FnMut(TrainingCriteriaMetrics) -> bool,
+                impl FnMut(TrainingStats),
             >,
         >,
         rng: &mut R,
@@ -218,15 +224,15 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     }
 
     /// Generate training criteria metrics for the current state of this trainer.
-    /// This is a strict subset of the data available in an instance of [`ContinuousTrainingStats`]
+    /// This is a strict subset of the data available in an instance of [`TrainingStats`]
     /// returned from calling [`ContinuousTrainer::stats`]. However, these
     /// metrics were chosen specifically for their computation efficiency, and thus can be
     /// re-evaluated frequently with minimal cost. These metrics are used both to determine
     /// whether or not to continue training, and whether or not to display a report about
     /// training progress.
-    pub fn metrics(&self) -> ContinuousTrainingCriteriaMetrics {
+    pub fn metrics(&self) -> TrainingCriteriaMetrics {
         let gene_pool = self.gene_pool.read().unwrap();
-        ContinuousTrainingCriteriaMetrics {
+        TrainingCriteriaMetrics {
             max_fitness: gene_pool.first().unwrap().1,
             min_fitness: gene_pool.last().unwrap().1,
             median_fitness: gene_pool[gene_pool.len() / 2].1,
@@ -238,8 +244,8 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     /// This function is called whenever the reporting strategy is asked
     /// to produce a report about the current population, but it may also be called
     /// manually here.
-    pub fn stats(&self) -> ContinuousTrainingStats {
-        ContinuousTrainingStats {
+    pub fn stats(&self) -> TrainingStats {
+        TrainingStats {
             population_stats: self.gene_pool.read().unwrap().iter().map(|x| x.1).collect(),
             child_count: self.children_created,
         }
@@ -247,9 +253,9 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
 }
 
 /// A collection of relevant & quick to compute metrics that
-/// can be used to inform whether or not to continue training
+/// can be used to inform whether or not to continue training.
 #[derive(Clone, Copy, Debug)]
-pub struct ContinuousTrainingCriteriaMetrics {
+pub struct TrainingCriteriaMetrics {
     /// Maximum fitness of the population.
     pub max_fitness: f32,
 
@@ -269,7 +275,7 @@ pub struct ContinuousTrainingCriteriaMetrics {
 /// Relatively more expensive to compute than training metrics, so
 /// should be computed infrequently.
 #[derive(Clone, Copy, Debug)]
-pub struct ContinuousTrainingStats {
+pub struct TrainingStats {
     /// A collection of standard population stats: see [`PopulationStats`]
     /// for more information
     pub population_stats: PopulationStats,
@@ -277,11 +283,11 @@ pub struct ContinuousTrainingStats {
     /// Total number of children that have been
     /// reproduced and introduced into the population,
     /// including the initial seed population count.
-    /// Same as [`ContinuousTrainingCriteriaMetrics::child_count`].
+    /// Same as [`TrainingCriteriaMetrics::child_count`].
     pub child_count: usize,
 }
 
-impl fmt::Display for ContinuousTrainingStats {
+impl fmt::Display for TrainingStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "child #{} {}", self.child_count, self.population_stats)
     }
@@ -293,11 +299,11 @@ impl fmt::Display for ContinuousTrainingStats {
 pub fn default_reporting_strategy(
     n: usize,
 ) -> TrainingReportStrategy<
-    impl FnMut(ContinuousTrainingCriteriaMetrics) -> bool,
-    impl FnMut(ContinuousTrainingStats),
+    impl FnMut(TrainingCriteriaMetrics) -> bool,
+    impl FnMut(TrainingStats),
 > {
     TrainingReportStrategy {
-        should_report: move |m: ContinuousTrainingCriteriaMetrics| m.child_count % n == 0,
+        should_report: move |m: TrainingCriteriaMetrics| m.child_count % n == 0,
         report_callback: |s| println!("{s}"),
     }
 }

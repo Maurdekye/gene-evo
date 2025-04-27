@@ -16,15 +16,24 @@ pub mod stochastic;
 /// Implement this trait for your type to evolve it using genetic evolution.
 pub trait Genome {
     /// Generate a new instance of this genome from the given random source.
-    fn generate<R: RandomSource>(rng: &mut R) -> Self;
+    fn generate<R>(rng: &mut R) -> Self
+    where
+        R: RandomSource;
 
-    /// Mutate this genome by an amount using the given random source.
+    /// Mutate this genome by some amount using the given random source.
     /// The `mutation_rate` parameter should influence how much mutation to
     /// perform on the genome, with 0 meaning no mutation, ie. the genome is unchanged.
-    fn mutate<R: RandomSource>(&mut self, mutation_rate: f32, rng: &mut R);
+    fn mutate<R>(&mut self, mutation_rate: f32, rng: &mut R)
+    where
+        R: RandomSource;
 
     /// Evaluate this genome for its 'fitness' score. Higher fitness
-    /// scores will lead to a higher survival rate.
+    /// scores will lead to a higher survival rate. 
+    /// 
+    /// Genetic evolution
+    /// is most effective when the fitness of a gene is computationally
+    /// expensive and/or chaotic to compute, so execution of this method
+    /// is parallelized. 
     fn fitness(&self) -> f32;
 }
 
@@ -32,14 +41,13 @@ pub trait Genome {
 /// for progress reporting.
 #[derive(Clone, Copy, Debug)]
 pub struct PopulationStats {
-    
     /// Maximum fitness of the population.
     pub max_fitness: f32,
-    
+
     /// Minimum fitness of the population.
     pub min_fitness: f32,
-    
-    /// Median fitness of the population.
+
+    /// Mean fitness of the population.
     pub mean_fitness: f32,
 
     /// Median fitness of the population.
@@ -84,7 +92,7 @@ pub struct TrainingReportStrategy<F, C> {
     /// should be generated at this moment.
     pub should_report: F,
 
-    /// A callback used to when a report should be displayed 
+    /// A callback used to when a report should be displayed
     /// or logged in some form. This callback is only called if
     /// [`TrainingReportStrategy::should_report`] returns `true`.
     pub report_callback: C,
@@ -148,4 +156,17 @@ impl<S> Gate<S> {
             state = self.0.1.wait(state).unwrap();
         }
     }
+}
+
+fn bounds(iter: impl Iterator<Item = f32>) -> Option<(f32, f32)> {
+    let mut minmax = None;
+    for score in iter {
+        minmax = match (minmax, score) {
+            (None, score) => Some((score, score)),
+            (Some((min, max)), score) if score < min => Some((score, max)),
+            (Some((min, max)), score) if score > max => Some((min, score)),
+            (minmax, _) => minmax,
+        };
+    }
+    minmax
 }
