@@ -31,11 +31,13 @@ where
     pub gene_pool: Arc<RwLock<Vec<RankedGenome<G>>>>,
     pub children_created: usize,
     pub mutation_rate: f32,
-    pub inertial_momentum: f32,
+    pub inertia: f32,
 
-    work_submission: mpmc::Sender<Job<G>>,
+    work_submission: mpmc::Sender<FirstStageJob<G>>,
     #[allow(unused)]
-    worker_pool: Vec<ScopedJoinHandle<'scope, ()>>,
+    first_stage_worker_pool: Vec<ScopedJoinHandle<'scope, ()>>,
+    #[allow(unused)]
+    second_stage_worker_pool: Vec<ScopedJoinHandle<'scope, ()>>,
     #[allow(unused)]
     receiver_thread: ScopedJoinHandle<'scope, ()>,
     population_size: usize,
@@ -49,7 +51,7 @@ where
     pub fn new(
         population_size: usize,
         mutation_rate: f32,
-        inertial_momentum: f32,
+        inertia: f32,
         scope: &'scope thread::Scope<'scope, '_>,
     ) -> Self
     where
@@ -58,12 +60,21 @@ where
         let in_flight = Gate::new(0);
         let (work_submission, inbox) = mpmc::channel();
         let (outbox, work_reception) = mpsc::channel();
+        let (first_stage_outbox, second_stage_inbox) = mpmc::channel();
         let gene_pool = Arc::new(RwLock::new(Vec::new()));
-        let worker_pool = (0..num_cpus())
+        let first_stage_worker_pool = (0..num_cpus())
             .map(|_| {
                 let inbox = inbox.clone();
                 let outbox = outbox.clone();
-                scope.spawn(move || Self::worker_thread(inbox, outbox))
+                let first_stage_outbox = first_stage_outbox.clone();
+                scope.spawn(move || Self::first_stage_worker(inbox, outbox, first_stage_outbox))
+            })
+            .collect();
+        let second_stage_worker_pool = (0..num_cpus())
+            .map(|_| {
+                let second_stage_inbox = second_stage_inbox.clone();
+                let outbox = outbox.clone();
+                scope.spawn(move || Self::second_stage_worker(second_stage_inbox, outbox))
             })
             .collect();
         let receiver_thread = {
@@ -77,39 +88,66 @@ where
             gene_pool,
             children_created: 0,
             mutation_rate,
-            inertial_momentum,
+            inertia,
             work_submission,
-            worker_pool,
+            first_stage_worker_pool,
+            second_stage_worker_pool,
             receiver_thread,
             population_size,
             in_flight,
         }
     }
 
-    fn worker_thread(inbox: mpmc::Receiver<Job<G>>, outbox: mpsc::Sender<RankedGenome<G>>) {
+    fn first_stage_worker(
+        inbox: mpmc::Receiver<FirstStageJob<G>>,
+        outbox: mpsc::Sender<RankedGenome<G>>,
+        first_stage_outbox: mpmc::Sender<SecondStageJob<G>>,
+    ) {
         for job in inbox {
-            let ranked_gene = match job {
-                Job::NewGene(gene) => {
+            match job {
+                FirstStageJob::NewGene(gene) => {
                     let mut ranked_gene: RankedGenome<G> = gene.into();
                     ranked_gene.eval();
-                    ranked_gene
+                    outbox.send(ranked_gene).unwrap();
                 }
-                Job::AncestorEvaluation {
+                FirstStageJob::FirstStageAncestorEvaluation {
                     mut gene,
                     mutation_to_apply,
-                    inertia,
+                    velocity,
                 } => {
                     let prior_fitness = gene.fitness();
                     gene.apply_mutation(&mutation_to_apply);
-                    let current_fitness = gene.fitness();
-                    RankedGenome {
-                        gene,
-                        current_fitness,
-                        prior_fitness,
-                        inertia,
-                        recent_mutation: mutation_to_apply,
-                    }
+                    first_stage_outbox
+                        .send(SecondStageJob {
+                            gene,
+                            prior_fitness,
+                            recent_mutation: mutation_to_apply,
+                            velocity,
+                        })
+                        .unwrap();
                 }
+            }
+        }
+    }
+
+    fn second_stage_worker(
+        second_stage_inbox: mpmc::Receiver<SecondStageJob<G>>,
+        outbox: mpsc::Sender<RankedGenome<G>>,
+    ) {
+        for job in second_stage_inbox {
+            let SecondStageJob {
+                gene,
+                prior_fitness,
+                recent_mutation,
+                velocity,
+            } = job;
+            let current_fitness = gene.fitness();
+            let ranked_gene = RankedGenome {
+                gene,
+                current_fitness,
+                prior_fitness,
+                velocity,
+                recent_mutation,
             };
             outbox.send(ranked_gene).unwrap();
         }
@@ -137,7 +175,7 @@ where
         }
     }
 
-    fn submit_job(&mut self, ranked_gene: Job<G>) {
+    fn submit_job(&mut self, ranked_gene: FirstStageJob<G>) {
         self.children_created += 1;
         self.in_flight.update(|x| x.add_assign(1));
         self.work_submission.send(ranked_gene).unwrap();
@@ -149,7 +187,7 @@ where
     {
         let current_gene_pool_size = self.gene_pool.read().unwrap().len();
         for _ in current_gene_pool_size..self.population_size {
-            self.submit_job(Job::NewGene(G::generate(rng)));
+            self.submit_job(FirstStageJob::NewGene(G::generate(rng)));
         }
     }
 
@@ -204,18 +242,19 @@ where
             };
 
             let delta_fitness =
-                (parent.current_fitness - parent.prior_fitness) * self.inertial_momentum;
-            let additional_momentum = parent.recent_mutation * delta_fitness;
-            let inertia = parent.inertia + additional_momentum;
+                (parent.current_fitness - parent.prior_fitness) * self.inertia;
+            let acceleration = parent.recent_mutation * delta_fitness;
+            let velocity = parent.velocity + acceleration;
             let mut gene = parent.gene;
-            gene.apply_mutation(&inertia);
+            gene.apply_mutation(&velocity);
             let mutation_to_apply = G::create_mutation(rng);
-            let new_job = Job::AncestorEvaluation {
+            let new_job = FirstStageJob::FirstStageAncestorEvaluation {
                 gene,
                 mutation_to_apply,
-                inertia,
+                velocity,
             };
             self.submit_job(new_job);
+
             let metrics = self.metrics();
             if let Some(reporting_strategy) = &mut reporting_strategy {
                 if (reporting_strategy.should_report)(metrics) {
@@ -319,16 +358,26 @@ pub fn default_reporting_strategy(
     }
 }
 
-enum Job<G>
+enum FirstStageJob<G>
 where
     G: InertialGenome,
 {
     NewGene(G),
-    AncestorEvaluation {
+    FirstStageAncestorEvaluation {
         gene: G,
         mutation_to_apply: G::MutationVector,
-        inertia: G::MutationVector,
+        velocity: G::MutationVector,
     },
+}
+
+struct SecondStageJob<G>
+where
+    G: InertialGenome,
+{
+    gene: G,
+    prior_fitness: f32,
+    recent_mutation: G::MutationVector,
+    velocity: G::MutationVector,
 }
 
 #[derive(Clone, Debug)]
@@ -339,7 +388,7 @@ where
     gene: G,
     current_fitness: f32,
     prior_fitness: f32,
-    inertia: G::MutationVector,
+    velocity: G::MutationVector,
     recent_mutation: G::MutationVector,
 }
 
@@ -361,7 +410,7 @@ where
             gene,
             current_fitness: 0.0,
             prior_fitness: 0.0,
-            inertia: G::MutationVector::default(),
+            velocity: G::MutationVector::default(),
             recent_mutation: G::MutationVector::default(),
         }
     }
