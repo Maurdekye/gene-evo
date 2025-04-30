@@ -43,7 +43,7 @@ pub struct ContinuousTrainer<'scope, G> {
     pub mutation_rate: f32,
 
     /// The proportion of newly reproduced children that are created as a result of
-    /// crossbreeding, vs mutations.
+    /// crossbreeding vs mutations.
     ///
     /// Higher = more crossbreeding, lower = more mutations.
     /// Set to 1 to only create new children via crossbreeding, and 0 to only create new children
@@ -196,6 +196,9 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     /// and method under which periodic statistical reporting of the population is performed.
     /// Pass `None` to disable reporting entirely, otherwise pass `Some` with an instance of a
     /// [`TrainingReportStrategy`] to define the two methods necessary to manage reporting.
+    /// To mimic the default reporting strategy, pass the result of [`default_reporting_strategy()`] wrapped
+    /// in `Some()`.
+    /// 
     /// A [`RandomSource`] must be passed as a source of randomness
     /// for mutating genes to produce new offspring.
     pub fn train_custom<R>(

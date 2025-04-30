@@ -18,14 +18,15 @@ use crate::{
 /// This is a unique and novel genetic algorithm strategy, the "inertial" strategy.
 ///
 /// This is a modification of the [`ContinuousTrainer`] that implements a further novel extension of the
-/// genetic algorithm. instead of mutations and crossovers, this trainer makes exclusive use of a concept referred
+/// genetic algorithm. Instead of mutations and crossovers, this trainer makes exclusive use of a concept referred
 /// to as "mutation vectors". Borrowing from the more widely used machine learning technique of gradient descent,
 /// mutations are characterized not as random adjustemnts to a given gene, but as mutation vectors, which can
 /// represent an abstract "direction" of mutational progress. In this way, a gene accrues
 /// "mutation velocity" over time as it mutates in positive ways, gaining momentum towards mutation directions that
 /// improve its fitness.
 ///
-/// As it's a modification of the [`ContinuousTrainer`], many of the same structures and method are shared.
+/// As it's a modification of the [`ContinuousTrainer`], many of the same structures and method are shared between the
+/// two trainers.
 pub struct InertialTrainer<'scope, G>
 where
     G: InertialGenome,
@@ -34,7 +35,7 @@ where
     /// sorted descending by fitness.
     ///
     /// Includes additional relevant information
-    /// necessary to perform the inertia based algorithm.
+    /// necessary to perform the inertia based genetic algorithm.
     ///
     /// Because of the continuous nature of the trainer,
     /// the collection is behind an `Arc<RwLock<_>>` combo.
@@ -82,7 +83,8 @@ impl<'scope, G> InertialTrainer<'scope, G>
 where
     G: InertialGenome,
 {
-    /// Construct a new trainer with given population size, mutation rate, inertia, and damping parameters.
+    /// Construct a new trainer with given population size, 
+    /// mutation rate, inertia, and damping parameters.
     ///
     /// A reference to a [`thread::Scope`] must be passed in order
     /// to spawn the child worker threads for the lifetime of the trainer.
@@ -266,6 +268,9 @@ where
     /// and method under which periodic statistical reporting of the population is performed.
     /// Pass `None` to disable reporting entirely, otherwise pass `Some` with an instance of a
     /// [`TrainingReportStrategy`] to define the two methods necessary to manage reporting.
+    /// To mimic the default reporting strategy, pass the result of [`default_reporting_strategy()`] wrapped
+    /// in `Some()`.
+    /// 
     /// A [`RandomSource`] must be passed as a source of randomness
     /// for mutating genes to produce new offspring.
     pub fn train_custom<R>(

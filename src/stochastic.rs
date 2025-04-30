@@ -15,6 +15,10 @@ use crate::{
 
 // imports for documentation
 #[allow(unused_imports)]
+use crate::continuous::ContinuousTrainer;
+
+// imports for documentation
+#[allow(unused_imports)]
 use crate::continuous;
 
 /// This is one of two genetic algorithms in this crate, the "stochastic" strategy.
@@ -34,7 +38,7 @@ pub struct StochasticTrainer<'scope, G> {
     /// training process.
     ///
     /// Note: members of the population
-    /// in this trainer are unsorted, unlike in [`continuous::ContinuousTrainer`]
+    /// in this trainer are unsorted, unlike in [`ContinuousTrainer`]
     pub gene_pool: Vec<(G, Option<f32>)>,
 
     /// The current number of generations the trainer has iterated.
@@ -44,7 +48,7 @@ pub struct StochasticTrainer<'scope, G> {
     pub mutation_rate: f32,
 
     /// The proportion of newly reproduced children that are created as a result of
-    /// crossbreeding, vs mutations.
+    /// crossbreeding vs mutations.
     ///
     /// Higher = more crossbreeding, lower = more mutations.
     /// Set to 1 to only create new children via crossbreeding, and 0 to only create new children
@@ -111,7 +115,9 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     }
 
     /// Evaluate the fitness of all genes in the population lacking fitness
-    /// scores in parallel. All genes with a `None` as the second value in
+    /// scores in parallel. 
+    /// 
+    /// All genes with a `None` as the second value in
     /// their pair in the [`StochasticTrainer::gene_pool`] will have their
     /// fitness evaluated and defined.
     pub fn eval(&mut self)
@@ -136,8 +142,9 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
         self.gene_pool.iter().filter_map(|(_, s)| *s)
     }
 
-    /// Prune the population using the given `selection_strategy`. The
-    /// strategy should take a float between 0-1 representing the percentile of the
+    /// Prune the population using the given `selection_strategy`. 
+    /// 
+    /// The strategy should take a float between 0-1 representing the percentile of the
     /// fitness score associated (higher is better), and return
     /// a bool representing whether or not to retain the gene associated with this score
     /// in the population.
@@ -160,6 +167,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     }
 
     /// Reproduce new children into the population, up to the population cap.
+    /// 
     /// Chooses parent genes from the population to mutate or crossbreed, preferentially weighted by fitness
     /// score.
     ///
@@ -209,7 +217,7 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
         }
     }
 
-    /// Perform one iteration of the genetic evolution process:
+    /// Perform one iteration of the genetic evolution process.
     ///
     /// 1. Increment the generation
     /// 2. Evaluate the fitness for all genes in the current population
@@ -218,6 +226,9 @@ impl<'scope, G> StochasticTrainer<'scope, G> {
     /// 5. Reproduce the population to the current cap using the passed [`RandomSource`]
     /// 6. Generate a report about the current generation's statistics, if necessary
     ///
+    /// As this function is responsible for progress reporting, it receives a reference
+    /// to a [`TrainingReportStrategy`].
+    /// 
     /// This function is used internally by the training process; it should
     /// typically not be called directly unless the user knows what they're doing.
     pub fn step<R>(

@@ -31,6 +31,7 @@ pub trait Genome {
         R: RandomSource;
 
     /// Mutate this genome by some amount using the given random source.
+    /// 
     /// The `mutation_rate` parameter should influence how much mutation to
     /// perform on the genome, with 0 meaning no mutation, ie. the genome is unchanged.
     fn mutate<R>(&mut self, mutation_rate: f32, rng: &mut R)
@@ -42,13 +43,9 @@ pub trait Genome {
     where
         R: RandomSource;
 
-    /// Evaluate this genome for its 'fitness' score. Higher fitness
-    /// scores will lead to a higher survival rate.
-    ///
-    /// Genetic evolution
-    /// is most effective when the fitness of a gene is computationally
-    /// expensive and/or chaotic to compute, so execution of this method
-    /// is parallelized.
+    /// Evaluate this genome for its 'fitness' score. 
+    /// 
+    /// Higher fitness scores will lead to a higher survival rate.
     ///
     /// Negative fitness scores are valid.
     fn fitness(&self) -> f32;
@@ -100,7 +97,9 @@ impl fmt::Display for PopulationStats {
 
 /// A struct that encompasses a two-part reporting
 /// strategy to use when performing periodic progress
-/// updates. [`TrainingReportStrategy::should_report`]
+/// updates. 
+/// 
+/// [`TrainingReportStrategy::should_report`]
 /// represents whether or not a report should be generated
 /// at this moment, and [`TrainingReportStrategy::report_callback`]
 /// performs the actual reporting.
@@ -110,7 +109,9 @@ pub struct TrainingReportStrategy<F, C> {
     pub should_report: F,
 
     /// A callback used to when a report should be displayed
-    /// or logged in some form. This callback is only called if
+    /// or logged in some form. 
+    /// 
+    /// This callback is only called if
     /// [`TrainingReportStrategy::should_report`] returns `true`.
     pub report_callback: C,
 }
