@@ -1,6 +1,7 @@
 //! Intertial Training.
 //! See the documentation for [`InertialTrainer`] for more details.
 
+use core::fmt;
 use std::{
     ops::{Add, AddAssign, Mul},
     random::RandomSource,
@@ -10,7 +11,9 @@ use std::{
 
 #[allow(unused_imports)]
 use crate::continuous;
-use crate::{Gate, num_cpus, random_choice_weighted_mapped_by_key};
+use crate::{
+    Gate, PopulationStats, TrainingReportStrategy, num_cpus, random_choice_weighted_mapped_by_key,
+};
 
 /// This is a unique genetic algorithm strategy, the "inertial" strategy.
 ///
@@ -129,7 +132,33 @@ where
         }
     }
 
-    pub fn train_custom<R>(&mut self, num_children: usize, rng: &mut R) -> G
+    /// Begin training, finishing once `num_children` children have been
+    /// reproduced, ranked for fitness, and introduced into the population.
+    /// A [`RandomSource`] must be passed as a source of randomness
+    /// for mutating genes to produce new offspring.
+    pub fn train<R>(&mut self, num_children: usize, rng: &mut R) -> G
+    where
+        R: RandomSource,
+        G: Clone + Send + Sync + 'scope,
+    {
+        self.train_custom(
+            |x| x.child_count <= num_children,
+            Some(default_reporting_strategy(self.population_size)),
+            rng,
+        )
+    }
+
+    pub fn train_custom<R>(
+        &mut self,
+        mut train_criteria: impl FnMut(TrainingCriteriaMetrics) -> bool,
+        mut reporting_strategy: Option<
+            TrainingReportStrategy<
+                impl FnMut(TrainingCriteriaMetrics) -> bool,
+                impl FnMut(TrainingStats),
+            >,
+        >,
+        rng: &mut R,
+    ) -> G
     where
         R: RandomSource,
         G: Clone,
@@ -154,12 +183,106 @@ where
             };
             // todo: mutation algorithm
             self.submit_job(new_parent);
-            if self.children_created >= num_children {
+            let metrics = self.metrics();
+            if let Some(reporting_strategy) = &mut reporting_strategy {
+                if (reporting_strategy.should_report)(metrics) {
+                    (reporting_strategy.report_callback)(self.stats())
+                }
+            }
+            if !(train_criteria)(metrics) {
                 break;
             }
         }
         self.in_flight.wait_while(|x| *x > 0);
         self.gene_pool.read().unwrap().first().unwrap().gene.clone()
+    }
+
+    /// Generate training criteria metrics for the current state of this trainer.
+    /// This is a strict subset of the data available in an instance of [`TrainingStats`]
+    /// returned from calling [`ContinuousTrainer::stats`]. However, these
+    /// metrics were chosen specifically for their computation efficiency, and thus can be
+    /// re-evaluated frequently with minimal cost. These metrics are used both to determine
+    /// whether or not to continue training, and whether or not to display a report about
+    /// training progress.
+    pub fn metrics(&self) -> TrainingCriteriaMetrics {
+        let gene_pool = self.gene_pool.read().unwrap();
+        TrainingCriteriaMetrics {
+            max_fitness: gene_pool.first().unwrap().fitness,
+            min_fitness: gene_pool.last().unwrap().fitness,
+            median_fitness: gene_pool[gene_pool.len() / 2].fitness,
+            child_count: self.children_created,
+        }
+    }
+
+    /// Generate population stats for the current state of this trainer.
+    /// This function is called whenever the reporting strategy is asked
+    /// to produce a report about the current population, but it may also be called
+    /// manually here.
+    pub fn stats(&self) -> TrainingStats {
+        TrainingStats {
+            population_stats: self
+                .gene_pool
+                .read()
+                .unwrap()
+                .iter()
+                .map(|x| x.fitness)
+                .collect(),
+            child_count: self.children_created,
+        }
+    }
+}
+
+/// A collection of relevant & quick to compute metrics that
+/// can be used to inform whether or not to continue training.
+#[derive(Clone, Copy, Debug)]
+pub struct TrainingCriteriaMetrics {
+    /// Maximum fitness of the population.
+    pub max_fitness: f32,
+
+    /// Minimum fitness of the population.
+    pub min_fitness: f32,
+
+    /// Median fitness of the population.
+    pub median_fitness: f32,
+
+    /// Total number of children that have been
+    /// reproduced and introduced into the population,
+    /// including the initial seed population count.
+    pub child_count: usize,
+}
+
+/// A collection of statistics about the population as a whole
+/// Relatively more expensive to compute than training metrics, so
+/// should be computed infrequently.
+#[derive(Clone, Copy, Debug)]
+pub struct TrainingStats {
+    /// A collection of standard population stats: see [`PopulationStats`]
+    /// for more information
+    pub population_stats: PopulationStats,
+
+    /// Total number of children that have been
+    /// reproduced and introduced into the population,
+    /// including the initial seed population count.
+    /// Same as [`TrainingCriteriaMetrics::child_count`].
+    pub child_count: usize,
+}
+
+impl fmt::Display for TrainingStats {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "child #{} {}", self.child_count, self.population_stats)
+    }
+}
+
+/// Returns a default reporting strategy which logs population
+/// statistics to the console every `n` children reproduced.
+/// Used by [`InertialTrainer::train`].
+pub fn default_reporting_strategy(
+    n: usize,
+) -> TrainingReportStrategy<impl FnMut(TrainingCriteriaMetrics) -> bool, impl FnMut(TrainingStats)>
+{
+    TrainingReportStrategy {
+        should_report: move |m: TrainingCriteriaMetrics| m.child_count % n == 0,
+        report_callback: |s| println!("{s}"),
     }
 }
 
