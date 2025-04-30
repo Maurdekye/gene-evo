@@ -10,10 +10,11 @@ use std::{
 };
 
 pub mod continuous;
+pub mod inertial;
 pub mod stochastic;
 
 /// Represents a single Genome in a genetic algorithm.
-/// 
+///
 /// Implement this trait for your type to evolve it using natural selection.
 pub trait Genome {
     /// Generate a new instance of this genome from the given random source.
@@ -40,7 +41,7 @@ pub trait Genome {
     /// is most effective when the fitness of a gene is computationally
     /// expensive and/or chaotic to compute, so execution of this method
     /// is parallelized.
-    /// 
+    ///
     /// Negative fitness scores are valid.
     fn fitness(&self) -> f32;
 }
@@ -142,6 +143,27 @@ where
         n -= weight;
     }
     &weights.last().unwrap().0
+}
+
+fn random_choice_weighted_mapped_by_key<'a, T, R>(
+    elems: &'a [T],
+    rng: &mut R,
+    weight_map: impl Fn(f32) -> f32,
+    key: impl Fn(&T) -> f32,
+) -> &'a T
+where
+    R: RandomSource,
+{
+    let total: f32 = elems.iter().map(|x| (weight_map)(key(x))).sum();
+    let mut n = random_f32(rng) * total;
+    for value in elems {
+        let weight = (weight_map)(key(value));
+        if n <= weight {
+            return value;
+        }
+        n -= weight;
+    }
+    &elems.last().unwrap()
 }
 
 #[derive(Clone)]

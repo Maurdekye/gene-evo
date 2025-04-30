@@ -4,7 +4,7 @@
 
 use std::{
     array,
-    random::{DefaultRandomSource, Random, RandomSource},
+    random::{DefaultRandomSource, Random, RandomSource, random},
     thread::scope,
 };
 
@@ -17,20 +17,12 @@ pub struct PsuedoRandomSource {
 
 impl PsuedoRandomSource {
     pub fn new() -> Self {
-        let mut seed_bytes = [0; 8];
-        DefaultRandomSource.fill_bytes(&mut seed_bytes);
-        let state = u64::from_ne_bytes(seed_bytes);
-        let state = if state == 0 {
-            0x9e3779b97f4a7c15
-        } else {
-            state
-        };
-
-        PsuedoRandomSource::new_from_seed(state)
+        PsuedoRandomSource::new_from_seed(random())
     }
 
     pub fn new_from_seed(seed: u64) -> Self {
-        PsuedoRandomSource { state: seed }
+        let state = if seed == 0 { 0x9e3779b97f4a7c15 } else { seed };
+        PsuedoRandomSource { state }
     }
 
     /// use xorshift algorithm for psuedorandom generation

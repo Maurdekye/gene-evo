@@ -14,7 +14,7 @@ use crate::{
     random_f32,
 };
 
-/// This is one of two genetic algorithms in this crate, the "continuous" strategy.
+/// This is one of two basic genetic algorithms in this crate, the "continuous" strategy.
 ///
 /// This is an alternative genetic algorithm implementation compared to the standard stochastic,
 /// generation-based strategy. This trainer runs its training
@@ -80,14 +80,14 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
             .map(|_| {
                 let inbox = inbox.clone();
                 let outbox = outbox.clone();
-                scope.spawn(move || ContinuousTrainer::<G>::worker_thread(inbox, outbox))
+                scope.spawn(move || Self::worker_thread(inbox, outbox))
             })
             .collect();
         let receiver_thread = {
             let gene_pool = gene_pool.clone();
             let in_flight = in_flight.clone();
             scope.spawn(move || {
-                ContinuousTrainer::<G>::work_receiver_thread(
+                Self::work_receiver_thread(
                     work_reception,
                     gene_pool,
                     population_size,
@@ -207,6 +207,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
         G: Clone + Genome + Send + Sync + 'scope,
     {
         self.seed(rng);
+        self.in_flight.wait_while(|x| *x > 0);
         loop {
             let new_child = {
                 let gene_pool = self.gene_pool.read().unwrap();
