@@ -31,10 +31,12 @@ where
     pub gene_pool: Arc<RwLock<Vec<RankedGenome<G>>>>,
     pub children_created: usize,
     pub mutation_rate: f32,
-    pub inertia: f32,
+    pub inertial_momentum: f32,
 
-    work_submission: mpmc::Sender<RankedGenome<G>>,
+    work_submission: mpmc::Sender<Job<G>>,
+    #[allow(unused)]
     worker_pool: Vec<ScopedJoinHandle<'scope, ()>>,
+    #[allow(unused)]
     receiver_thread: ScopedJoinHandle<'scope, ()>,
     population_size: usize,
     in_flight: Gate<usize>,
@@ -47,7 +49,7 @@ where
     pub fn new(
         population_size: usize,
         mutation_rate: f32,
-        inertia: f32,
+        inertial_momentum: f32,
         scope: &'scope thread::Scope<'scope, '_>,
     ) -> Self
     where
@@ -75,7 +77,7 @@ where
             gene_pool,
             children_created: 0,
             mutation_rate,
-            inertia,
+            inertial_momentum,
             work_submission,
             worker_pool,
             receiver_thread,
@@ -84,12 +86,31 @@ where
         }
     }
 
-    fn worker_thread(
-        inbox: mpmc::Receiver<RankedGenome<G>>,
-        outbox: mpsc::Sender<RankedGenome<G>>,
-    ) {
-        for mut ranked_gene in inbox {
-            ranked_gene.eval();
+    fn worker_thread(inbox: mpmc::Receiver<Job<G>>, outbox: mpsc::Sender<RankedGenome<G>>) {
+        for job in inbox {
+            let ranked_gene = match job {
+                Job::NewGene(gene) => {
+                    let mut ranked_gene: RankedGenome<G> = gene.into();
+                    ranked_gene.eval();
+                    ranked_gene
+                }
+                Job::AncestorEvaluation {
+                    mut gene,
+                    mutation_to_apply,
+                    inertia,
+                } => {
+                    let prior_fitness = gene.fitness();
+                    gene.apply_mutation(&mutation_to_apply);
+                    let current_fitness = gene.fitness();
+                    RankedGenome {
+                        gene,
+                        current_fitness,
+                        prior_fitness,
+                        inertia,
+                        recent_mutation: mutation_to_apply,
+                    }
+                }
+            };
             outbox.send(ranked_gene).unwrap();
         }
     }
@@ -102,8 +123,8 @@ where
     ) {
         for ranked_gene in work_reception {
             let mut gene_pool = gene_pool.write().unwrap();
-            let insert_index =
-                gene_pool.binary_search_by(|rg| ranked_gene.fitness.total_cmp(&rg.fitness));
+            let insert_index = gene_pool
+                .binary_search_by(|rg| ranked_gene.current_fitness.total_cmp(&rg.current_fitness));
             let insert_index = match insert_index {
                 Ok(i) => i,
                 Err(i) => i,
@@ -116,7 +137,7 @@ where
         }
     }
 
-    pub fn submit_job(&mut self, ranked_gene: RankedGenome<G>) {
+    fn submit_job(&mut self, ranked_gene: Job<G>) {
         self.children_created += 1;
         self.in_flight.update(|x| x.add_assign(1));
         self.work_submission.send(ranked_gene).unwrap();
@@ -128,7 +149,7 @@ where
     {
         let current_gene_pool_size = self.gene_pool.read().unwrap().len();
         for _ in current_gene_pool_size..self.population_size {
-            self.submit_job(G::generate(rng).into());
+            self.submit_job(Job::NewGene(G::generate(rng)));
         }
     }
 
@@ -166,23 +187,35 @@ where
         self.seed(rng);
         self.in_flight.wait_while(|x| *x > 0);
         loop {
-            let new_parent = {
+            let parent = {
                 let gene_pool = self.gene_pool.read().unwrap();
                 let min_fitness = gene_pool
                     .iter()
-                    .map(|x| x.fitness)
+                    .map(|x| x.current_fitness)
                     .min_by(|a, b| a.total_cmp(b))
                     .unwrap();
                 random_choice_weighted_mapped_by_key(
                     &gene_pool,
                     rng,
                     |x| x - min_fitness,
-                    |x| x.fitness,
+                    |x| x.current_fitness,
                 )
                 .clone()
             };
-            // todo: mutation algorithm
-            self.submit_job(new_parent);
+
+            let delta_fitness =
+                (parent.current_fitness - parent.prior_fitness) * self.inertial_momentum;
+            let additional_momentum = parent.recent_mutation * delta_fitness;
+            let inertia = parent.inertia + additional_momentum;
+            let mut gene = parent.gene;
+            gene.apply_mutation(&inertia);
+            let mutation_to_apply = G::create_mutation(rng);
+            let new_job = Job::AncestorEvaluation {
+                gene,
+                mutation_to_apply,
+                inertia,
+            };
+            self.submit_job(new_job);
             let metrics = self.metrics();
             if let Some(reporting_strategy) = &mut reporting_strategy {
                 if (reporting_strategy.should_report)(metrics) {
@@ -207,9 +240,9 @@ where
     pub fn metrics(&self) -> TrainingCriteriaMetrics {
         let gene_pool = self.gene_pool.read().unwrap();
         TrainingCriteriaMetrics {
-            max_fitness: gene_pool.first().unwrap().fitness,
-            min_fitness: gene_pool.last().unwrap().fitness,
-            median_fitness: gene_pool[gene_pool.len() / 2].fitness,
+            max_fitness: gene_pool.first().unwrap().current_fitness,
+            min_fitness: gene_pool.last().unwrap().current_fitness,
+            median_fitness: gene_pool[gene_pool.len() / 2].current_fitness,
             child_count: self.children_created,
         }
     }
@@ -225,7 +258,7 @@ where
                 .read()
                 .unwrap()
                 .iter()
-                .map(|x| x.fitness)
+                .map(|x| x.current_fitness)
                 .collect(),
             child_count: self.children_created,
         }
@@ -286,15 +319,28 @@ pub fn default_reporting_strategy(
     }
 }
 
+enum Job<G>
+where
+    G: InertialGenome,
+{
+    NewGene(G),
+    AncestorEvaluation {
+        gene: G,
+        mutation_to_apply: G::MutationVector,
+        inertia: G::MutationVector,
+    },
+}
+
 #[derive(Clone, Debug)]
 pub struct RankedGenome<G>
 where
     G: InertialGenome,
 {
     gene: G,
-    fitness: f32,
-    parent_fitness: Option<f32>,
+    current_fitness: f32,
+    prior_fitness: f32,
     inertia: G::MutationVector,
+    recent_mutation: G::MutationVector,
 }
 
 impl<G> RankedGenome<G>
@@ -302,7 +348,7 @@ where
     G: InertialGenome,
 {
     fn eval(&mut self) {
-        self.fitness = self.gene.fitness();
+        self.current_fitness = self.gene.fitness();
     }
 }
 
@@ -313,9 +359,10 @@ where
     fn from(gene: G) -> Self {
         RankedGenome {
             gene,
-            fitness: 0.0,
-            parent_fitness: None,
+            current_fitness: 0.0,
+            prior_fitness: 0.0,
             inertia: G::MutationVector::default(),
+            recent_mutation: G::MutationVector::default(),
         }
     }
 }
@@ -347,12 +394,12 @@ pub trait InertialGenome {
 
     /// Generate a random mutation vector that can be used to
     /// mutate this genome.
-    fn create_mutation<R>(&self, rng: &mut R) -> Self::MutationVector
+    fn create_mutation<R>(rng: &mut R) -> Self::MutationVector
     where
         R: RandomSource;
 
     /// Apply the mutations encapsulated by a mutation vector to this genome.
-    fn apply_mutation(&mut self, mutation: Self::MutationVector);
+    fn apply_mutation(&mut self, mutation: &Self::MutationVector);
 
     /// Evaluate this genome for its 'fitness' score. Higher fitness
     /// scores will lead to a higher survival rate.
