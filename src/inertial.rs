@@ -10,28 +10,62 @@ use std::{
 };
 
 #[allow(unused_imports)]
-use crate::continuous;
+use crate::continuous::ContinuousTrainer;
 use crate::{
     Gate, PopulationStats, TrainingReportStrategy, num_cpus, random_choice_weighted_mapped_by_key,
 };
 
-/// This is a unique genetic algorithm strategy, the "inertial" strategy.
+/// This is a unique and novel genetic algorithm strategy, the "inertial" strategy.
 ///
-/// This is a modification of the [`continuous::ContinuousTrainer`] that implements a further extension of the
+/// This is a modification of the [`ContinuousTrainer`] that implements a further novel extension of the
 /// genetic algorithm. instead of mutations and crossovers, this trainer makes exclusive use of a concept referred
-/// to as "mutation vectors". Borrowing from the more well known machine learning technique of gradient descent,
+/// to as "mutation vectors". Borrowing from the more widely used machine learning technique of gradient descent,
 /// mutations are characterized not as random adjustemnts to a given gene, but as mutation vectors, which can
-/// represent a given gene's velocity making mutations in a certain direction. in this way, a gene accrues
-/// "mutation inertia" over time as it mutates in positive ways, gaining momentum towards mutation directions that
+/// represent an abstract "direction" of mutational progress. In this way, a gene accrues
+/// "mutation velocity" over time as it mutates in positive ways, gaining momentum towards mutation directions that
 /// improve its fitness.
+///
+/// As it's a modification of the [`ContinuousTrainer`], many of the same structures and method are shared.
 pub struct InertialTrainer<'scope, G>
 where
     G: InertialGenome,
 {
+    /// A collection of all the genes in the population,
+    /// sorted descending by fitness.
+    ///
+    /// Includes additional relevant information
+    /// necessary to perform the inertia based algorithm.
+    ///
+    /// Because of the continuous nature of the trainer,
+    /// the collection is behind an `Arc<RwLock<_>>` combo.
     pub gene_pool: Arc<RwLock<Vec<RankedGenome<G>>>>,
+
+    /// Count of the total number of children reproduced.
     pub children_created: usize,
+
+    /// The mutation rate of newly reproduced children.
     pub mutation_rate: f32,
+
+    /// The impact of inertia on a gene's mutation. A
+    /// value of 0 disables inertia entirely, effectively
+    /// making this trainer identical to the [`ContinuousTrainer`],
+    /// but with double the performance cost. A positive value close to zero
+    /// is typically desired, between 0.1-0.0001.
+    ///
+    /// Contextualizing this optimizer as a form of PID controller,
+    /// this parameter is akin to the "proportional" component.
     pub inertia: f32,
+
+    /// The amount of damping to apply to a gene's inertia over time;
+    /// set to between 0-1. 1 means no damping, and 0 will completely cancel
+    /// out all impacts from velocity entirely, effectively making
+    /// this trainer identical to the [`ContinuousTrainer`], but
+    /// with double the performance cost. A value below but close
+    /// to 1 is typically desired, between 0.9-0.999.
+    ///
+    /// Contextualizing this optimizer as a form of PID controller,
+    /// this parameter is akin to the "derivative" component.
+    pub damping: f32,
 
     work_submission: mpmc::Sender<FirstStageJob<G>>,
     #[allow(unused)]
@@ -48,10 +82,15 @@ impl<'scope, G> InertialTrainer<'scope, G>
 where
     G: InertialGenome,
 {
+    /// Construct a new trainer with given population size, mutation rate, inertia, and damping parameters.
+    ///
+    /// A reference to a [`thread::Scope`] must be passed in order
+    /// to spawn the child worker threads for the lifetime of the trainer.
     pub fn new(
         population_size: usize,
         mutation_rate: f32,
         inertia: f32,
+        damping: f32,
         scope: &'scope thread::Scope<'scope, '_>,
     ) -> Self
     where
@@ -59,8 +98,8 @@ where
     {
         let in_flight = Gate::new(0);
         let (work_submission, inbox) = mpmc::channel();
-        let (outbox, work_reception) = mpsc::channel();
         let (first_stage_outbox, second_stage_inbox) = mpmc::channel();
+        let (outbox, work_reception) = mpsc::channel();
         let gene_pool = Arc::new(RwLock::new(Vec::new()));
         let first_stage_worker_pool = (0..num_cpus())
             .map(|_| {
@@ -89,6 +128,7 @@ where
             children_created: 0,
             mutation_rate,
             inertia,
+            damping,
             work_submission,
             first_stage_worker_pool,
             second_stage_worker_pool,
@@ -134,13 +174,13 @@ where
         second_stage_inbox: mpmc::Receiver<SecondStageJob<G>>,
         outbox: mpsc::Sender<RankedGenome<G>>,
     ) {
-        for job in second_stage_inbox {
-            let SecondStageJob {
-                gene,
-                prior_fitness,
-                recent_mutation,
-                velocity,
-            } = job;
+        for SecondStageJob {
+            gene,
+            prior_fitness,
+            recent_mutation,
+            velocity,
+        } in second_stage_inbox
+        {
             let current_fitness = gene.fitness();
             let ranked_gene = RankedGenome {
                 gene,
@@ -181,6 +221,13 @@ where
         self.work_submission.send(ranked_gene).unwrap();
     }
 
+    /// Seed the population with new genes up to the current population cap.
+    ///
+    /// This is called automatically at the start of training, so should typically
+    /// not need to be called directly.
+    ///
+    /// A [`RandomSource`] must be passed as a source of randomness
+    /// for generating the initial population.
     pub fn seed<R>(&mut self, rng: &mut R)
     where
         R: RandomSource,
@@ -193,6 +240,7 @@ where
 
     /// Begin training, finishing once `num_children` children have been
     /// reproduced, ranked for fitness, and introduced into the population.
+    ///
     /// A [`RandomSource`] must be passed as a source of randomness
     /// for mutating genes to produce new offspring.
     pub fn train<R>(&mut self, num_children: usize, rng: &mut R) -> G
@@ -207,6 +255,19 @@ where
         )
     }
 
+    /// Begin training with detailed custom parameters.
+    ///
+    /// Instead of a specific child
+    /// count cutoff point, a function `train_criteria` is passed in, which takes in an
+    /// instance of [`TrainingCriteriaMetrics`] and outputs a `bool`. This allows greater
+    /// control over exactly what criteria to finish training under.
+    ///
+    /// Additionally, the user may pass a `reporting_strategy`, which determines the conditions
+    /// and method under which periodic statistical reporting of the population is performed.
+    /// Pass `None` to disable reporting entirely, otherwise pass `Some` with an instance of a
+    /// [`TrainingReportStrategy`] to define the two methods necessary to manage reporting.
+    /// A [`RandomSource`] must be passed as a source of randomness
+    /// for mutating genes to produce new offspring.
     pub fn train_custom<R>(
         &mut self,
         mut train_criteria: impl FnMut(TrainingCriteriaMetrics) -> bool,
@@ -241,10 +302,9 @@ where
                 .clone()
             };
 
-            let delta_fitness =
-                (parent.current_fitness - parent.prior_fitness) * self.inertia;
+            let delta_fitness = (parent.current_fitness - parent.prior_fitness) * self.inertia;
             let acceleration = parent.recent_mutation * delta_fitness;
-            let velocity = parent.velocity + acceleration;
+            let velocity = (parent.velocity + acceleration) * self.damping;
             let mut gene = parent.gene;
             gene.apply_mutation(&velocity);
             let mutation_to_apply = G::create_mutation(rng);
@@ -270,6 +330,7 @@ where
     }
 
     /// Generate training criteria metrics for the current state of this trainer.
+    ///
     /// This is a strict subset of the data available in an instance of [`TrainingStats`]
     /// returned from calling [`ContinuousTrainer::stats`]. However, these
     /// metrics were chosen specifically for their computation efficiency, and thus can be
@@ -287,6 +348,7 @@ where
     }
 
     /// Generate population stats for the current state of this trainer.
+    ///
     /// This function is called whenever the reporting strategy is asked
     /// to produce a report about the current population, but it may also be called
     /// manually here.
@@ -323,7 +385,8 @@ pub struct TrainingCriteriaMetrics {
     pub child_count: usize,
 }
 
-/// A collection of statistics about the population as a whole
+/// A collection of statistics about the population as a whole.
+///
 /// Relatively more expensive to compute than training metrics, so
 /// should be computed infrequently.
 #[derive(Clone, Copy, Debug)]
@@ -335,6 +398,7 @@ pub struct TrainingStats {
     /// Total number of children that have been
     /// reproduced and introduced into the population,
     /// including the initial seed population count.
+    ///
     /// Same as [`TrainingCriteriaMetrics::child_count`].
     pub child_count: usize,
 }
@@ -347,6 +411,7 @@ impl fmt::Display for TrainingStats {
 
 /// Returns a default reporting strategy which logs population
 /// statistics to the console every `n` children reproduced.
+///
 /// Used by [`InertialTrainer::train`].
 pub fn default_reporting_strategy(
     n: usize,
@@ -416,25 +481,27 @@ where
     }
 }
 
-/// Represents a mutation vector. It must obey basic vector space
-/// operations, such as vector addition and scalar multiplication.
-/// The default value should be a "zero" vector, which performs no
-/// mutations if applied.
-pub trait MutationVector:
-    Clone + Sized + Default + Send + Sync + Add<Self, Output = Self> + Mul<f32, Output = Self>
-{
-}
 
 /// Represents a single Genome in the inertial genetic algorithm.
 ///
 /// The unique functionality of the intertial trainer requires a unique
-/// genome implementation that operates with mutation vectors as opposed to just
+/// genome implementation that operates with mutation vectors, as opposed to just
 /// applying mutations statically.
 /// Implement this trait for your type to evolve it using the [`InertialTrainer`].
 pub trait InertialGenome {
-    /// The type that this gene uses to represent its mutation vectors. See
-    /// the documentation on [`MutationVector`] for more information.
-    type MutationVector: MutationVector;
+    /// Represents a mutation vector.
+    ///
+    /// It must obey basic vector space
+    /// operations, such as vector addition and scalar multiplication.
+    /// The default value should be a "zero" vector, which performs no
+    /// mutations if applied.
+    type MutationVector: Clone
+        + Sized
+        + Default
+        + Send
+        + Sync
+        + Add<Self::MutationVector, Output = Self::MutationVector>
+        + Mul<f32, Output = Self::MutationVector>;
 
     /// Generate a new instance of this genome from the given random source.
     fn generate<R>(rng: &mut R) -> Self
@@ -450,8 +517,9 @@ pub trait InertialGenome {
     /// Apply the mutations encapsulated by a mutation vector to this genome.
     fn apply_mutation(&mut self, mutation: &Self::MutationVector);
 
-    /// Evaluate this genome for its 'fitness' score. Higher fitness
-    /// scores will lead to a higher survival rate.
+    /// Evaluate this genome for its 'fitness' score.
+    ///
+    /// Higher fitness scores will lead to a higher survival rate.
     ///
     /// Negative fitness scores are valid.
     fn fitness(&self) -> f32;

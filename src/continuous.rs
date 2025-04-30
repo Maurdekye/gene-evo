@@ -140,7 +140,9 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     }
 
     /// Submit a new genome to the worker pool to be evaluated for its fitness and
-    /// ranked among the population. Used internally by the training process, should
+    /// ranked among the population. 
+    /// 
+    /// Used internally by the training process, should
     /// typically not be called directly unless the user knows what they're doing.
     pub fn submit_job(&mut self, gene: G) {
         self.children_created += 1;
@@ -149,8 +151,10 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     }
 
     /// Seed the population with new genes up to the current population cap.
+    /// 
     /// This is called automatically at the start of training, so should typically
     /// not need to be called directly.
+    /// 
     /// A [`RandomSource`] must be passed as a source of randomness
     /// for generating the initial population.
     pub fn seed<R>(&mut self, rng: &mut R)
@@ -166,6 +170,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
 
     /// Begin training, finishing once `num_children` children have been
     /// reproduced, ranked for fitness, and introduced into the population.
+    /// 
     /// A [`RandomSource`] must be passed as a source of randomness
     /// for mutating genes to produce new offspring.
     pub fn train<R>(&mut self, num_children: usize, rng: &mut R) -> G
@@ -180,7 +185,9 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
         )
     }
 
-    /// Begin training with detailed custom parameters. Instead of a specific child
+    /// Begin training with detailed custom parameters. 
+    /// 
+    /// Instead of a specific child
     /// count cutoff point, a function `train_criteria` is passed in, which takes in an
     /// instance of [`TrainingCriteriaMetrics`] and outputs a `bool`. This allows greater
     /// control over exactly what criteria to finish training under.
@@ -250,6 +257,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     }
 
     /// Generate training criteria metrics for the current state of this trainer.
+    /// 
     /// This is a strict subset of the data available in an instance of [`TrainingStats`]
     /// returned from calling [`ContinuousTrainer::stats`]. However, these
     /// metrics were chosen specifically for their computation efficiency, and thus can be
@@ -267,6 +275,7 @@ impl<'scope, G> ContinuousTrainer<'scope, G> {
     }
 
     /// Generate population stats for the current state of this trainer.
+    /// 
     /// This function is called whenever the reporting strategy is asked
     /// to produce a report about the current population, but it may also be called
     /// manually here.
@@ -297,7 +306,8 @@ pub struct TrainingCriteriaMetrics {
     pub child_count: usize,
 }
 
-/// A collection of statistics about the population as a whole
+/// A collection of statistics about the population as a whole.
+/// 
 /// Relatively more expensive to compute than training metrics, so
 /// should be computed infrequently.
 #[derive(Clone, Copy, Debug)]
@@ -309,6 +319,7 @@ pub struct TrainingStats {
     /// Total number of children that have been
     /// reproduced and introduced into the population,
     /// including the initial seed population count.
+    /// 
     /// Same as [`TrainingCriteriaMetrics::child_count`].
     pub child_count: usize,
 }
@@ -321,6 +332,7 @@ impl fmt::Display for TrainingStats {
 
 /// Returns a default reporting strategy which logs population
 /// statistics to the console every `n` children reproduced.
+/// 
 /// Used by [`ContinuousTrainer::train`].
 pub fn default_reporting_strategy(
     n: usize,

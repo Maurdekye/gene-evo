@@ -9,6 +9,14 @@ use std::{
     thread::available_parallelism,
 };
 
+// imports for documentation
+#[allow(unused_imports)]
+use crate::{
+    continuous::ContinuousTrainer,
+    inertial::{InertialGenome, InertialTrainer},
+    stochastic::StochasticTrainer,
+};
+
 pub mod continuous;
 pub mod inertial;
 pub mod stochastic;

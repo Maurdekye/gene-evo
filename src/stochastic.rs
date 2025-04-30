@@ -13,7 +13,7 @@ use crate::{
     random_f32,
 };
 
-// for documentation refs
+// imports for documentation
 #[allow(unused_imports)]
 use crate::continuous;
 

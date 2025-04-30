@@ -151,3 +151,78 @@ fn continuous() {
         println!("Fitness: {}", final_genome.fitness());
     });
 }
+
+mod inertial {
+    use std::{
+        array,
+        ops::{Add, Mul},
+        random::RandomSource,
+        thread::scope,
+    };
+
+    use gene_evo::inertial::{InertialGenome, InertialTrainer};
+
+    use crate::{PsuedoRandomSource, QuadraticZerosFinder, random_f32};
+
+    #[derive(Clone, Default)]
+    pub struct QuadraticZerosMutation([f32; 4]);
+
+    impl Add<QuadraticZerosMutation> for QuadraticZerosMutation {
+        type Output = QuadraticZerosMutation;
+
+        fn add(self, rhs: QuadraticZerosMutation) -> Self::Output {
+            let mut i = 0;
+            QuadraticZerosMutation(self.0.map(|a| {
+                i += 1;
+                a + rhs.0[i - 1]
+            }))
+        }
+    }
+
+    impl Mul<f32> for QuadraticZerosMutation {
+        type Output = QuadraticZerosMutation;
+
+        fn mul(self, rhs: f32) -> Self::Output {
+            QuadraticZerosMutation(self.0.map(|a| a * rhs))
+        }
+    }
+
+    impl InertialGenome for QuadraticZerosFinder {
+        type MutationVector = QuadraticZerosMutation;
+
+        fn generate<R>(rng: &mut R) -> Self
+        where
+            R: RandomSource,
+        {
+            <QuadraticZerosFinder as gene_evo::Genome>::generate(rng)
+        }
+
+        fn create_mutation<R>(rng: &mut R) -> Self::MutationVector
+        where
+            R: RandomSource,
+        {
+            QuadraticZerosMutation(array::from_fn(|_| random_f32(rng) - 0.5))
+        }
+
+        fn apply_mutation(&mut self, mutation: &Self::MutationVector) {
+            for (this, rhs) in self.zeroes.iter_mut().zip(mutation.0) {
+                *this += rhs;
+            }
+        }
+
+        fn fitness(&self) -> f32 {
+            <QuadraticZerosFinder as gene_evo::Genome>::fitness(self)
+        }
+    }
+
+    #[test]
+    fn inertial() {
+        scope(|scope| {
+            let mut trainer = InertialTrainer::new(10000, 0.05, 0.01, 0.99, scope);
+            let final_genome: QuadraticZerosFinder =
+                trainer.train(100000, &mut PsuedoRandomSource::new());
+            println!("Final genome: {final_genome:?}");
+            println!("Fitness: {}", final_genome.fitness());
+        });
+    }
+}
