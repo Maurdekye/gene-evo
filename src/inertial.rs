@@ -450,16 +450,36 @@ where
     velocity: G::MutationVector,
 }
 
+/// A genome within an inertial training gene pool, with
+/// additional data relevant to the inertial training process.
 #[derive(Clone, Debug)]
 pub struct RankedGenome<G>
 where
     G: InertialGenome,
 {
-    gene: G,
-    current_fitness: f32,
-    prior_fitness: f32,
-    velocity: G::MutationVector,
-    recent_mutation: G::MutationVector,
+    /// The gene in question.
+    /// 
+    /// See [`InertialGenome`] for more details.
+    pub gene: G,
+
+    /// The computed fitness for this gene.
+    pub current_fitness: f32,
+
+    /// The prior computed fitness of the gene before the 
+    /// `recent_mutation` was applied.
+    pub prior_fitness: f32,
+
+    /// The mutation velocity of the gene, stored as a
+    /// mutation vector. 
+    /// 
+    /// This accrued mutation is applied
+    /// during every mutation step, in addition to a random
+    /// marginal mutation.
+    pub velocity: G::MutationVector,
+
+    /// The most recent marginal random mutation performed
+    /// on this gene before it reached its current state.
+    pub recent_mutation: G::MutationVector,
 }
 
 impl<G> RankedGenome<G>
